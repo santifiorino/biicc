@@ -1,0 +1,17 @@
+{
+  "name": "biicc",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "http": "^0.0.1-security",
+    "osc": "^2.4.4",
+    "ws": "^8.17.0"
+  }
+}
