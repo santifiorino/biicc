@@ -30,12 +30,12 @@ function setup() {
 function createControlElements() {
     controlElements = [];
     for (let i = 0; i < 5; i++) {
-        controlElements.push(new Slider(i+1, 30, 70 + i * 45, 200, 20, 0, 1));
+        controlElements.push(new Slider(i+1, 50, 70 + i * 45, 200, 20, 0, 1));
     }
     if (windowHeight > windowWidth) {
-        controlElements.push(new Pad(0, 30, 300, 200, 200));
+        controlElements.push(new Pad(1, 2, 50, 300, 200, 200));
     } else {
-        controlElements.push(new Pad(0, 400, 70, 200, 200));
+        controlElements.push(new Pad(1, 2, 400, 70, 200, 200));
     }
 }
 
@@ -53,7 +53,7 @@ function connectToSimulation() {
         args: [
             {
                 type: "s",
-                value: simulationInput.value()
+                value: simulationInput.value().toLowerCase()
             }
         ]
     };

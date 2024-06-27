@@ -70,16 +70,7 @@ class Slider extends SliderElement {
         fill("#D92919");
         ellipse(this.x + map(this.value, 0, 1, 0, this.w), this.y + this.h/2, this.h + 10, this.h + 10);
 
-        textSize(this.h);
-        // squares
-        fill("#933129");
-        square(this.x + this.w + 20, this.y, this.h);
-        square(this.x + this.w + 84, this.y, this.h);
-        // text
-        fill(255);
-        text("-", this.x + this.w + 26, this.y + 16);
-        text((this.id > 9) ? this.id : "0" + this.id, this.x + this.w + 50, this.y + this.h - 2);
-        text("+", this.x + this.w + 88, this.y + 16);
+        drawIdSelector(this.x + this.w + 20, this.y, this.id);
     }
 
     handlePress() {
@@ -88,15 +79,15 @@ class Slider extends SliderElement {
             const newValue = constrain(map(mouseX, this.x, this.x + this.w, 0, 1), 0, 1);
             this.updateValue(newValue);
         }
-        if (this.x + this.w + 20 <= mouseX && mouseX <= this.x + this.w + 20 + this.h) {
-            if (this.y <= mouseY && mouseY <= this.y + this.h) {
-                if (this.id > 1) this.id -= 1;
+        if (inSquareBounds(this.x + this.w + 20, this.y)){
+            if (this.id > 1) {
+                this.id -= 1;
                 this.value = 0;
             }
         }
-        if (this.x + this.w + 84 <= mouseX && mouseX <= this.x + this.w + 84 + this.h) {
-            if (this.y <= mouseY && mouseY <= this.y + this.h) {
-                if (this.id < 12) this.id += 1;
+        if (inSquareBounds(this.x + this.w + 84, this.y)) {
+            if (this.id < 12) {
+                this.id += 1;
                 this.value = 0;
             }
         }
@@ -125,10 +116,11 @@ class Slider extends SliderElement {
 }
 
 class Pad extends SliderElement {
-    constructor(id, x, y, w, h) {
+    constructor(id, id2, x, y, w, h) {
         super(id, x, y, w, h);
-        this.valueX = 0.5;
-        this.valueY = 0.5;
+        this.id2 = id2;
+        this.valueX = 0;
+        this.valueY = 0;
     }
 
     draw() {
@@ -144,6 +136,12 @@ class Pad extends SliderElement {
 
         stroke(0);
         ellipse(this.x + map(this.valueX, 0, 1, 0, this.w), this.y + map(this.valueY, 0, 1, 0, this.h), 30, 30);
+
+        fill(255);
+        text("x-axis:", this.x + this.w + 20, this.y + 16);
+        drawIdSelector(this.x + this.w + 20, this.y + 30, this.id);
+        text("y-axis:", this.x + this.w + 20, this.y + 86);
+        drawIdSelector(this.x + this.w + 20, this.y + 100, this.id2);
     }
 
     handlePress() {
@@ -152,6 +150,43 @@ class Pad extends SliderElement {
             const newValueX = constrain(map(mouseX, this.x, this.x + this.w, 0, 1), 0, 1);
             const newValueY = constrain(map(mouseY, this.y, this.y + this.h, 0, 1), 0, 1);
             this.updateValue(newValueX, newValueY);
+        }
+
+        if (inSquareBounds(this.x + this.w + 84, this.y + 30)) {
+            if (this.id != 12) {
+                if (this.id + 1 != this.id2) {
+                    this.id += 1;
+                } else if (this.id < 11) {
+                    this.id += 2;
+                }
+            }
+        }
+        if (inSquareBounds(this.x + this.w + 84, this.y + 100)) {
+            if (this.id2 < 12) {
+                if (this.id2 + 1 != this.id) {
+                    this.id2 += 1;
+                } else if (this.id2 < 11) {
+                    this.id2 += 2;
+                }
+            }
+        }
+        if (inSquareBounds(this.x + this.w + 20, this.y + 30)) {
+            if (this.id > 1) {
+                if (this.id - 1 != this.id2) {
+                    this.id -= 1;
+                } else if (this.id > 2) {
+                    this.id -= 2;
+                }
+            }
+        }
+        if (inSquareBounds(this.x + this.w + 20, this.y + 100)) {
+            if (this.id2 > 1) {
+                if (this.id2 - 1 != this.id) {
+                    this.id2 -= 1;
+                } else if (this.id2 > 2) {
+                    this.id2 -= 2;
+                }
+            }
         }
     }
 
@@ -167,7 +202,7 @@ class Pad extends SliderElement {
         this.valueX = valueX;
         this.valueY = valueY;
         const oscMessage = {
-            address: "/pads/" + this.id,
+            address: "/pads/" + this.id + "/" + this.id2,
             args: [
                 {
                     type: "f",
@@ -181,4 +216,22 @@ class Pad extends SliderElement {
         };
         oscWebSocket.send(oscMessage);
     }
+}
+
+function inSquareBounds(x, y) {
+    if (!(x <= mouseX && mouseX <= x + 20)) return false;
+    return (y <= mouseY && mouseY <= y + 20);
+}
+
+function drawIdSelector(x, y, id) {
+    textSize(20);
+    // squares
+    fill("#933129");
+    square(x, y, 20);
+    square(x + 64, y, 20);
+    // text
+    fill(255);
+    text("-", x + 6, y + 16);
+    text((id > 9) ? id : "0" + id, x + 30, y + 16);
+    text("+", x + 68, y + 16);
 }

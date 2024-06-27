@@ -69,9 +69,12 @@ function parseOscMessage(oscMsg) {
         //console.log(map(sliderValue, 0, 1, 0, maxDC));
         settings["dc " + sliderId] = map(sliderValue, 0, 1, 0, maxDC); 
     } else if (addressParts[1] === "pads") {
-        // const padId = addressParts[2];
-        // const x = oscMsg.args[0].value * width;
-        // const y = oscMsg.args[1].value * height;
+        const padId = int(addressParts[2]);
+        const padId2 = int(addressParts[3]);
+        const xValue = oscMsg.args[0].value;
+        const yValue = oscMsg.args[1].value;
+        settings["dc " + padId] = map(xValue, 0, 1, 0, maxDC);
+        settings["dc " + padId2] = map(yValue, 0, 1, 0, maxDC);
     }
 }
 
