@@ -6,7 +6,7 @@ function setup() {
     createCanvas(windowWidth, windowHeight);
 
     oscWebSocket = new osc.WebSocketPort({
-        url: "ws://192.168.0.177:9000",
+        url: "ws://<IP_ADDR>:9000",
         metadata: true
     });
     oscWebSocket.on("ready", function () {

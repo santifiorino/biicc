@@ -80,7 +80,7 @@ function setup() {
   simulationId = Math.random().toString(36).substring(2, 8);
 
   oscWebSocket = new osc.WebSocketPort({
-    url: "ws://192.168.0.177:9000",
+    url: "ws://<IP_ADDR>:9000",
     metadata: true
   });
 
