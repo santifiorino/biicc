@@ -6,7 +6,7 @@ function setup() {
     createCanvas(windowWidth, windowHeight);
 
     oscWebSocket = new osc.WebSocketPort({
-        url: "ws://<IP_ADDR>:9000",
+        url: "ws://192.168.0.177:9000",
         metadata: true
     });
     oscWebSocket.on("ready", function () {
@@ -16,26 +16,31 @@ function setup() {
 
     textSize(32);
     simulationInput = createInput();
-    simulationInput.position(30, 60);
+    simulationInput.position(30, 30);
     simulationInput.size(200);
     simulationInput.attribute("placeholder", "Simulation ID");
 
     connectButton = createButton("Connect");
-    connectButton.position(240, 60);
+    connectButton.position(250, 30);
     connectButton.mousePressed(connectToSimulation);
 
-    for (let i = 0; i < 3; i++) {
-        controlElements.push(new Slider(i, 30, 100 + i * 40, 200, 20, 0, 1));
+    createControlElements();
+}
+
+function createControlElements() {
+    controlElements = [];
+    for (let i = 0; i < 5; i++) {
+        controlElements.push(new Slider(i+1, 30, 70 + i * 45, 200, 20, 0, 1));
     }
-    controlElements.push(new Pad(0, 30, 220, 200, 200));
-    controlElements.push(new Pad(1, 240, 220, 200, 200));
+    if (windowHeight > windowWidth) {
+        controlElements.push(new Pad(0, 30, 300, 200, 200));
+    } else {
+        controlElements.push(new Pad(0, 400, 70, 200, 200));
+    }
 }
 
 function draw() {
     background("#2C2428");
-    
-    fill(255);
-    text("Controller", 30, 30);
 
     for (let controlElement of controlElements) {
         controlElement.draw();
@@ -89,4 +94,9 @@ function touchMoved() {
     for (let controlElement of controlElements) {
         controlElement.touchMoved();
     }
+}
+
+function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+    createControlElements();
 }

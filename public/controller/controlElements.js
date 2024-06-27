@@ -25,12 +25,17 @@ class SliderElement {
         this.handlePress();
     }
 
+    handleRelease() {
+        if (this.dragging)
+            this.dragging = false;
+    }
+
     mouseReleased() {
-        this.dragging = false;
+        this.handleRelease()
     }
 
     touchEnded() {
-        this.dragging = false;
+        this.handleRelease()
     }
 
     handleDrag() {
@@ -47,31 +52,53 @@ class SliderElement {
 }
 
 class Slider extends SliderElement {
-    constructor(id, x, y, w, h) {
+    constructor(id, x, y, w, h, min, max) {
         super(id, x, y, w, h);
-        this.value = 0.5;
+        this.value = 0;
     }
 
     draw() {
+        stroke(0);
+        strokeWeight(2);
+        // bar
         fill("#1D1418");
         rect(this.x, this.y, this.w, this.h);
+        // value
         fill("#933129");
         rect(this.x, this.y, map(this.value, 0, 1, 0, this.w), this.h);
-        
-        let handleW = 6;
-        let handleH = this.h + 6;
-        let handleX = this.x + map(this.value, 0, 1, 0, this.w) - handleW / 2;
-        let handleY = this.y - 3;
-        
+        // circle
         fill("#D92919");
-        rect(handleX, handleY, handleW, handleH);
+        ellipse(this.x + map(this.value, 0, 1, 0, this.w), this.y + this.h/2, this.h + 10, this.h + 10);
+
+        textSize(this.h);
+        // squares
+        fill("#933129");
+        square(this.x + this.w + 20, this.y, this.h);
+        square(this.x + this.w + 84, this.y, this.h);
+        // text
+        fill(255);
+        text("-", this.x + this.w + 26, this.y + 16);
+        text((this.id > 9) ? this.id : "0" + this.id, this.x + this.w + 50, this.y + this.h - 2);
+        text("+", this.x + this.w + 88, this.y + 16);
     }
 
     handlePress() {
-        if (mouseX > this.x && mouseX < this.x + this.w && mouseY > this.y && mouseY < this.y + this.h) {
+        if (dist(mouseX, mouseY, this.x + map(this.value, 0, 1, 0, this.w), this.y + this.h/2) < (this.h + 10) / 2) {
             this.dragging = true;
             const newValue = constrain(map(mouseX, this.x, this.x + this.w, 0, 1), 0, 1);
             this.updateValue(newValue);
+        }
+        if (this.x + this.w + 20 <= mouseX && mouseX <= this.x + this.w + 20 + this.h) {
+            if (this.y <= mouseY && mouseY <= this.y + this.h) {
+                if (this.id > 1) this.id -= 1;
+                this.value = 0;
+            }
+        }
+        if (this.x + this.w + 84 <= mouseX && mouseX <= this.x + this.w + 84 + this.h) {
+            if (this.y <= mouseY && mouseY <= this.y + this.h) {
+                if (this.id < 12) this.id += 1;
+                this.value = 0;
+            }
         }
     }
 
@@ -105,22 +132,22 @@ class Pad extends SliderElement {
     }
 
     draw() {
-        strokeWeight(0);
+        strokeWeight(2);
+        stroke(0);
         fill("#1D1418");
         rect(this.x, this.y, this.w, this.h);
         fill("#D92919");
 
         stroke("#933129");
-        strokeWeight(2);
         line(this.x + map(this.valueX, 0, 1, 0, this.w), this.y, this.x + map(this.valueX, 0, 1, 0, this.w), this.y + this.h);
         line(this.x, this.y + map(this.valueY, 0, 1, 0, this.h), this.x + this.w, this.y + map(this.valueY, 0, 1, 0, this.h));
-        strokeWeight(0);
 
-        ellipse(this.x + map(this.valueX, 0, 1, 0, this.w), this.y + map(this.valueY, 0, 1, 0, this.h), 20, 20);
+        stroke(0);
+        ellipse(this.x + map(this.valueX, 0, 1, 0, this.w), this.y + map(this.valueY, 0, 1, 0, this.h), 30, 30);
     }
 
     handlePress() {
-        if (dist(mouseX, mouseY, this.x + map(this.valueX, 0, 1, 0, this.w), this.y + map(this.valueY, 0, 1, 0, this.h)) < 10) {
+        if (dist(mouseX, mouseY, this.x + map(this.valueX, 0, 1, 0, this.w), this.y + map(this.valueY, 0, 1, 0, this.h)) < 15) {
             this.dragging = true;
             const newValueX = constrain(map(mouseX, this.x, this.x + this.w, 0, 1), 0, 1);
             const newValueY = constrain(map(mouseY, this.y, this.y + this.h, 0, 1), 0, 1);

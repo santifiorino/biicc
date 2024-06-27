@@ -18,12 +18,12 @@ app.get('/', (req, res) => {
     res.sendFile(__dirname + '/public/index.html');
 });
 
-app.get('/simulation', (req, res) => {
+app.get('/snn', (req, res) => {
     res.sendFile(__dirname + '/public/simulation.html');
 });
 
 app.get('/controller', (req, res) => {
-    res.sendFile(__dirname + '/public/controller.html');
+    res.sendFile(__dirname + '/public/controller/index.html');
 });
 
 let simulations = {}; // { simulationId: simulationWS }
