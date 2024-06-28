@@ -60,6 +60,7 @@ drumnotes = ['A1', 'B1', 'C2', 'D2', 'E2', 'F2', 'G2', 'A2', 'B2']
 
 let oscWebSocket;
 let simulationId;
+let eventTracker;
 
 function parseOscMessage(oscMsg) {
     const addressParts = oscMsg.address.split("/");
@@ -75,6 +76,46 @@ function parseOscMessage(oscMsg) {
         const yValue = oscMsg.args[1].value;
         settings["dc " + padId] = map(xValue, 0, 1, 0, maxDC);
         settings["dc " + padId2] = map(yValue, 0, 1, 0, maxDC);
+    }
+}
+
+class EventTracker {
+    constructor() {
+        this.events = [];
+        this.deltas = [];
+    }
+
+    addEvent(neuronId) {
+        this.events.push([millis(), neuronId])
+        if (this.events.length > 1) {
+            this.deltas.push(this.events[this.events.length-1][0] - this.events[this.events.length-2][0]);
+        }
+    }
+
+    displayInformation() {
+        fill(255);
+        text("#Events (10s): " + this.events.length, width - 300, 80);
+        const mean = this.deltas.reduce((acc, val) => acc + val, 0) / this.deltas.length;
+        text("Δt mean (10s): " + int(mean), width - 300, 130);
+        const std = Math.sqrt(
+            this.deltas
+                .reduce((acc, val) => acc.concat((val - mean) ** 2), [])
+                .reduce((acc, val) => acc + val, 0) / this.deltas.length
+        );
+        text("Δt std (10s): " + int(std), width - 300, 180);
+        // return Math.sqrt(
+        //     this.deltas
+        //         .reduce((acc, val) => acc.concat((val - mean) ** 2), [])
+        //         .reduce((acc, val) => acc + val, 0) / this.deltas.length
+        // );
+    }
+
+    update() {
+        const currMillis = millis();
+        while (this.events.length > 0 && currMillis - this.events[0][0] > 10*1000) {
+            this.events.shift();
+            this.deltas.shift();
+        }
     }
 }
 
@@ -109,6 +150,8 @@ function setup() {
   });
 
   oscWebSocket.open();
+
+  eventTracker = new EventTracker();
 
   net_score_border = (net_scale - 0.6) * windowWidth
   createCanvas(windowWidth, windowHeight);
@@ -372,10 +415,6 @@ function setup() {
 function draw() {
   background(20);
 
-  fill(255);
-  textSize(32);
-  text(simulationId, width - 150, 30);
-
   translate(width / 2, height / 2)
 
   applyForces(nodes)
@@ -422,6 +461,17 @@ function draw() {
     knobs[k].draw(mouseX - width / 2, mouseY - height / 2)
   }
 
+  translate(-width / 2, -height / 2);
+
+  fill(0);
+  rect(width - 320, 0, 320, 200);
+
+  fill(255);
+  textSize(32);
+  text("Sim ID: " + simulationId, width - 300, 30);
+
+  eventTracker.update();
+  eventTracker.displayInformation();
   
 }
 

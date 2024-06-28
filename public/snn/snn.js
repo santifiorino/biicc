@@ -1,11 +1,9 @@
-
 function NeuralNetwork() {
     this.neurons = [];
     this.synapses = [];
 }
 
 NeuralNetwork.prototype.add_neuron = function () {
-
     let N = new Neuron();
     this.neurons.push(N);
 }
@@ -310,6 +308,7 @@ Neuron.prototype.set_event_callback = function (cb) {
 }
 
 Neuron.prototype.event = function () {
+    eventTracker.addEvent(this.neuronId);
     if (this.event_callback && typeof this.event_callback === "function") {
         this.event_callback();
     }
