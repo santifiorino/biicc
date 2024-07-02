@@ -64,18 +64,33 @@ let eventTracker;
 
 function parseOscMessage(oscMsg) {
     const addressParts = oscMsg.address.split("/");
-    if (addressParts[1] === "sliders") {
-        const sliderId = int(addressParts[2]);
-        const sliderValue = oscMsg.args[0].value;
-        //console.log(map(sliderValue, 0, 1, 0, maxDC));
-        settings["dc " + sliderId] = map(sliderValue, 0, 1, 0, maxDC); 
-    } else if (addressParts[1] === "pads") {
-        const padId = int(addressParts[2]);
-        const padId2 = int(addressParts[3]);
-        const xValue = oscMsg.args[0].value;
-        const yValue = oscMsg.args[1].value;
-        settings["dc " + padId] = map(xValue, 0, 1, 0, maxDC);
-        settings["dc " + padId2] = map(yValue, 0, 1, 0, maxDC);
+    switch (addressParts[1]) {
+        case "sliders":
+            const sliderId = int(addressParts[2]);
+            const sliderValue = oscMsg.args[0].value;
+            settings["dc " + sliderId] = map(sliderValue, 0, 1, 0, maxDC);
+            break;
+        case "pads":
+            const padId = int(addressParts[2]);
+            const padId2 = int(addressParts[3]);
+            const xValue = oscMsg.args[0].value;
+            const yValue = oscMsg.args[1].value;
+            settings["dc " + padId] = map(xValue, 0, 1, 0, maxDC);
+            settings["dc " + padId2] = map(yValue, 0, 1, 0, maxDC);
+            break;
+        case "getState":
+            args = [{type: "s", value: simulationId}]
+            for (let i = 0; i < n_neurons; i++) {
+                args.push({
+                    type: "f",
+                    value: settings["dc " + String(i+1)] / maxDC
+                })
+            }
+            oscWebSocket.send({
+                address: "/getState",
+                args: args
+            });
+            break;
     }
 }
 

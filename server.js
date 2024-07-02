@@ -26,8 +26,9 @@ app.get('/controller', (req, res) => {
     res.sendFile(__dirname + '/public/controller/index.html');
 });
 
-let simulations = {}; // { simulationId: simulationWS }
-let controllers = {}; // { controllerWS: simulationId }
+let simulations = {}; // { simulationId: simulationWs }
+let controllers = {}; // { controllerId: controllerWs }
+let connections = {}; // { controllerId: simulationId }
 
 const wss = new WebSocket.Server({ port: 9000 });
 
@@ -45,18 +46,48 @@ wss.on('connection', (ws) => {
                 simulations[simId] = ws;
                 console.log(`Registered simulation ${simId}`);
                 break;
-            case '/registerController':
+            case '/connectController':
                 simId = oscMsg.args[0].value;
+                const controllerId = oscMsg.args[1].value;
                 if (!simulations[simId]) return; // Simulation is not registered
-                controllers[ws] = simId;
-                console.log(`Registered controller for simulation ${simId}`);
+                controllers[controllerId] = ws;
+                connections[controllerId] = simId;
+                simulations[simId].send(osc.writePacket({
+                    address: "/getState",
+                    args: []
+                }));
+                console.log(`Connected controller to simulation ${simId}`);
+                break;
+            case '/getState':
+                simId = oscMsg.args[0].value;
+                oscMsg.args.shift();
+                for (let controller in connections) {
+                    if (connections[controller] == simId) {
+                        controllers[controller].send(osc.writePacket({
+                            address: "/getState",
+                            args: oscMsg.args
+                        }));
+                    }
+                }
                 break;
             default:
-                if (!controllers[ws]) return; // Controller is not registered
-                simId = controllers[ws];
-                const simWs = simulations[simId];
-                if (!simWs) return;
-                simWs.send(osc.writePacket(oscMsg));
+                // neuron update message
+                for (let controller in controllers) {
+                    if (controllers[controller] == ws) {
+                        // send message to simId
+                        simId = connections[controller];
+                        const simWs = simulations[simId];
+                        if (!simWs) break;
+                        simWs.send(osc.writePacket(oscMsg));
+                        // send message to other controllers connected to simId
+                        for (let controller2 in connections) {
+                            if (controller2 != controller && connections[controller2] == simId) {
+                                controllers[controller2].send(osc.writePacket(oscMsg));
+                            }
+                        }
+                        break;
+                    }
+                }
         }
     });
 
