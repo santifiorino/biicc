@@ -83,7 +83,7 @@ class Slider extends SliderElement {
                 this.id -= 1;
         }
         if (inSquareBounds(this.x + this.w + 84, this.y)) {
-            if (this.id < 11)
+            if (this.id < neuronValues.length-1)
                 this.id += 1;
         }
     }
@@ -146,19 +146,19 @@ class Pad extends SliderElement {
         }
 
         if (inSquareBounds(this.x + this.w + 84, this.y + 30)) {
-            if (this.id != 11) {
+            if (this.id != neuronValues.length-1) {
                 if (this.id + 1 != this.id2) {
                     this.id += 1;
-                } else if (this.id < 10) {
+                } else if (this.id < neuronValues.length-2) {
                     this.id += 2;
                 }
             }
         }
         if (inSquareBounds(this.x + this.w + 84, this.y + 100)) {
-            if (this.id2 < 11) {
+            if (this.id2 < neuronValues.length-1) {
                 if (this.id2 + 1 != this.id) {
                     this.id2 += 1;
-                } else if (this.id2 < 10) {
+                } else if (this.id2 < neuronValues.length-2) {
                     this.id2 += 2;
                 }
             }

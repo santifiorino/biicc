@@ -79,7 +79,9 @@ function parseOscMessage(oscMsg) {
             settings["dc " + padId2] = map(yValue, 0, 1, 0, maxDC);
             break;
         case "getState":
-            args = [{type: "s", value: simulationId}]
+            args = [{type: "s", value: simulationId},
+                    {type: "i", value: NN.neurons.length}
+            ]
             for (let i = 0; i < n_neurons; i++) {
                 args.push({
                     type: "f",

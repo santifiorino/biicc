@@ -2,7 +2,7 @@ let oscWebSocket;
 let simulationInput, connectButton;
 let controlElements = [];
 let controllerId;
-let neuronValues = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+let neuronValues = [];
 
 function parseOscMessage(oscMsg) {
     const addressParts = oscMsg.address.split("/");
@@ -22,9 +22,11 @@ function parseOscMessage(oscMsg) {
             break;
         case "getState":
             neuronValues = [];
-            for (let i = 0; i < oscMsg.args.length; i++) {
+            neuronsAmount = oscMsg.args[0].value;
+            for (let i = 1; i < oscMsg.args.length; i++) {
                 neuronValues.push(oscMsg.args[i].value);
             }
+            createControlElements();
             break;
     }
 }
@@ -51,26 +53,27 @@ function setup() {
 
     textSize(32);
     simulationInput = createInput();
-    simulationInput.position(30, 30);
+    simulationInput.position(50, 50);
     simulationInput.size(200);
     simulationInput.attribute("placeholder", "Simulation ID");
 
     connectButton = createButton("Connect");
-    connectButton.position(250, 30);
+    connectButton.position(260, 50);
     connectButton.mousePressed(connectToSimulation);
-
-    createControlElements();
 }
 
 function createControlElements() {
     controlElements = [];
-    for (let i = 0; i < 5; i++) {
-        controlElements.push(new Slider(i, 50, 70 + i * 45, 200, 20, 0, 1));
+    let yPos = 100;
+    for (let i = 0; i < min(5, neuronValues.length); i++) {
+        controlElements.push(new Slider(i, 50, yPos, 200, 20, 0, 1));
+        yPos += 45;
     }
+    yPos += 20;
     if (windowHeight > windowWidth) {
-        controlElements.push(new Pad(0, 1, 50, 300, 200, 200));
+        controlElements.push(new Pad(0, 1, 50, yPos, 200, 200));
     } else {
-        controlElements.push(new Pad(0, 1, 400, 70, 200, 200));
+        controlElements.push(new Pad(0, 1, 400, 100, 200, 200));
     }
 }
 
