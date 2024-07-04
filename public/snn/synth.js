@@ -2,10 +2,10 @@
 
 const casio = new Tone.Sampler({
     urls: {
-        A1: "A1.mp3",
-        A2: "A2.mp3",
+        A1: "casio-A1.mp3",
+        A2: "casio-A2.mp3",
     },
-    baseUrl: "https://tonejs.github.io/audio/casio/",
+    baseUrl: "sounds/",
 }).toDestination();
 
 const drum = new Tone.Sampler({
