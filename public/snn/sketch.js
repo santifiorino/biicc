@@ -65,28 +65,31 @@ let eventTracker;
 function parseOscMessage(oscMsg) {
     const addressParts = oscMsg.address.split("/");
     switch (addressParts[1]) {
-        case "sliders":
-            const sliderId = int(addressParts[2]);
-            const sliderValue = oscMsg.args[0].value;
-            settings["dc " + sliderId] = map(sliderValue, 0, 1, 0, maxDC);
-            break;
-        case "pads":
-            const padId = int(addressParts[2]);
-            const padId2 = int(addressParts[3]);
-            const xValue = oscMsg.args[0].value;
-            const yValue = oscMsg.args[1].value;
-            settings["dc " + padId] = map(xValue, 0, 1, 0, maxDC);
-            settings["dc " + padId2] = map(yValue, 0, 1, 0, maxDC);
+        case "update":
+            for (let i = 0; i < oscMsg.args.length; i+=2) {
+                const setting = oscMsg.args[i].value;
+                const value = oscMsg.args[i+1].value;
+                settings[setting] = value;
+                if (setting == "syn_type") NN.set_syn_type(value);
+                if (setting == "dropout") NN.set_dropout(value);
+                if (setting == "weight mean") NN.set_mean_weight(value);
+                if (setting == "weight size") NN.set_size_weight(value);
+                if (setting == "delay mean") NN.set_mean_delay(value);
+                if (setting == "delay size") NN.set_size_delay(value);
+                if (setting == "syn tau") NN.set_syn_tau(value);
+            }
             break;
         case "getState":
-            args = [{type: "s", value: simulationId},
-                    {type: "i", value: NN.neurons.length}
-            ]
-            for (let i = 0; i < n_neurons; i++) {
+            args = []
+            for (const setting in settings) {
+                args.push({
+                    type: "s",
+                    value: setting
+                });
                 args.push({
                     type: "f",
-                    value: settings["dc " + String(i+1)] / maxDC
-                })
+                    value: settings[setting]
+                });
             }
             oscWebSocket.send({
                 address: "/getState",
@@ -176,7 +179,6 @@ function setup() {
   syn_colors = { '-1': color(0, 80, 100), '1': color(20, 80, 100) };
   color_base = color(0, 0, 70)
   color_bright = color(0, 0, 100)
-  console.log('Setup')
 
   NN = new NeuralNetwork();
   NN.add_neurons(n_neurons);

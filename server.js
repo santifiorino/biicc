@@ -61,17 +61,15 @@ wss.on('connection', (ws) => {
                 console.log(`Connected controller ${controllerId} to simulation ${simId}`);
                 break;
             case '/getState':
-                simId = oscMsg.args[0].value;
-                oscMsg.args.shift();
+                simId = simWs2Id(ws);
                 sendSimStateToControllers(simId, {
                     address: "/getState",
                     args: oscMsg.args
                 });
                 break;
-            default:
-                // control message
+            case '/update':
                 controllerId = controllerWs2Id(ws);
-                sendCtrlMsg(controllerId, oscMsg);
+                sendUpdateMessage(controllerId, oscMsg);
                 break;
         }
     });
@@ -82,26 +80,24 @@ wss.on('connection', (ws) => {
         if (controllerId) {
             delete controllers[controllerId];
             if (connections[controllerId]) {
-                console.log(`Disconnected controller ${controllerId} from simulation ${connections[controllerId]}`)
                 delete connections[controllerId];
             }
         } else {
-            console.log(`Simulation ${simId} disconnected`);
             delete simulations[simId];
         }
     });
 });
 
-function sendCtrlMsg(controllerId, oscMsg) {
+function sendUpdateMessage(controllerId, oscMsg) {
     const simId = connections[controllerId];
     const simWs = simulations[simId];
     if (!simWs) return; // it's connected to a closed sim
     simWs.send(osc.writePacket(oscMsg));
-    sendCtrlMsgToAllControllers(controllerId, oscMsg);
+    sendUpdateToAllControllers(controllerId, oscMsg);
 }
 
 /** Sends oscMsg to every controller connected to the same simulation of fromControllerId */
-function sendCtrlMsgToAllControllers(fromControllerId, oscMsg) {
+function sendUpdateToAllControllers(fromControllerId, oscMsg) {
     const simId = connections[fromControllerId];
     for (let controllerId of getControllersConnectedToSim(simId))
         if (controllerId != fromControllerId)

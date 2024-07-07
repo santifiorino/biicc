@@ -1,32 +1,31 @@
 let oscWebSocket;
 let simulationInput, connectButton;
-let controlElements = [];
+let selectedNavbarTab = "MENU_CURRENTS";
+let neuronControlElements = [];
+let settingsControlElements = [];
 let controllerId;
-let neuronValues = [];
+let settings = {};
+let maxDC = 150;
 
 function parseOscMessage(oscMsg) {
     const addressParts = oscMsg.address.split("/");
     switch (addressParts[1]) {
-        case "sliders":
-            const sliderId = int(addressParts[2])-1;
-            const sliderValue = oscMsg.args[0].value;
-            neuronValues[sliderId] = sliderValue;
-            break;
-        case "pads":
-            const padId = int(addressParts[2])-1;
-            const padId2 = int(addressParts[3])-1;
-            const xValue = oscMsg.args[0].value;
-            const yValue = oscMsg.args[1].value;
-            neuronValues[padId] = xValue;
-            neuronValues[padId2] = yValue;
+        case "update":
+            for (let i = 0; i < oscMsg.args.length; i+=2) {
+                settings[oscMsg.args[i].value] = oscMsg.args[i+1].value
+            }
             break;
         case "getState":
-            neuronValues = [];
-            neuronsAmount = oscMsg.args[0].value;
-            for (let i = 1; i < oscMsg.args.length; i++) {
-                neuronValues.push(oscMsg.args[i].value);
+            settings = {};
+            neuronsAmount = 0;
+            for (let i = 0; i < oscMsg.args.length; i+=2) {
+                settings[oscMsg.args[i].value] = oscMsg.args[i+1].value;
+                if (oscMsg.args[i].value.startsWith("dc"))
+                    neuronsAmount++;
             }
-            createControlElements();
+            neuronsAmount--; // "dc all" is not an actual neuron
+            createNeuronControlElements();
+            createSettingsControlElements();
             break;
     }
 }
@@ -53,36 +52,72 @@ function setup() {
 
     textSize(32);
     simulationInput = createInput();
-    simulationInput.position(50, 50);
+    simulationInput.position(50, 70);
     simulationInput.size(200);
     simulationInput.attribute("placeholder", "Simulation ID");
 
     connectButton = createButton("Connect");
-    connectButton.position(260, 50);
+    connectButton.position(270, 70);
     connectButton.mousePressed(connectToSimulation);
 }
 
-function createControlElements() {
-    controlElements = [];
-    let yPos = 100;
-    for (let i = 0; i < min(5, neuronValues.length); i++) {
-        controlElements.push(new Slider(i, 50, yPos, 200, 20, 0, 1));
+function createNeuronControlElements() {
+    neuronControlElements = [];
+    let yPos = 110;
+    for (let i = 0; i < min(5, neuronsAmount); i++) {
+        neuronControlElements.push(new Slider("dc " + (i+1), 50, yPos, 200, 20, 0, maxDC, true));
         yPos += 45;
     }
     yPos += 20;
-    if (windowHeight > windowWidth) {
-        controlElements.push(new Pad(0, 1, 50, yPos, 200, 200));
-    } else {
-        controlElements.push(new Pad(0, 1, 400, 100, 200, 200));
-    }
+    neuronControlElements.push(new Pad("dc 1", "dc 2", 50, yPos, 200, 200, 0, maxDC));
+}
+
+function createSettingsControlElements() {
+    settingsControlElements = [];
+    settingsControlElements.push(new Slider("syn type", 50, 140, 250, 20, 0, 1));
+    settingsControlElements.push(new Slider("dropout", 50, 200, 250, 20, 0, 1));
+    settingsControlElements.push(new Slider("weight mean", 50, 260, 250, 20, 0, 80));
+    settingsControlElements.push(new Slider("weight size", 50, 320, 250, 20, 0, 40));
+    settingsControlElements.push(new Slider("delay mean", 50, 380, 250, 20, 0.01, 2));
+    settingsControlElements.push(new Slider("delay size", 50, 440, 250, 20, 0.001, 0.5));
+    settingsControlElements.push(new Slider("syn tau", 50, 510, 250, 20, 0.5, 2));
 }
 
 function draw() {
     background("#2C2428");
-
-    for (let controlElement of controlElements) {
-        controlElement.draw();
+    fill(0);
+    rect(0, 0, windowWidth, 50);
+    fill("#2C2428");
+    strokeWeight(0);
+    switch (selectedNavbarTab) {
+        case "MENU_CURRENTS":
+            rect(0, 0, windowWidth/2, 50);
+            for (let controlElement of neuronControlElements) {
+                controlElement.draw();
+            }
+            break;
+        case "MENU_NETWORK":
+            rect(windowWidth/2, 0, windowWidth/2, 50);
+            if (settingsControlElements.length > 0) {
+                textSize(20);
+                fill(255);
+                text("syn type", 50, 130)
+                text("dropout", 50, 190)
+                text("weight mean", 50, 250)
+                text("weight size", 50, 310)
+                text("delay mean", 50, 370)
+                text("delay size", 50, 430)
+                text("syn tau", 50, 490)
+            }
+            for (let controlElement of settingsControlElements) {
+                controlElement.draw();
+            }
+            break;
     }
+    fill(255);
+    textSize(32);
+    text("Currents", 30, 35);
+    text("Network", windowWidth/2 + 30, 35);
 }
 
 function connectToSimulation() {
@@ -103,42 +138,94 @@ function connectToSimulation() {
 }
 
 function mousePressed() {
-    for (let controlElement of controlElements) {
-        controlElement.mousePressed();
+    if (mouseY < 50) {
+        if (mouseX < windowWidth/2) {
+            selectedNavbarTab = "MENU_CURRENTS";
+        } else {
+            selectedNavbarTab = "MENU_NETWORK";
+        }
+    }
+    if (selectedNavbarTab == "MENU_CURRENTS") {
+        for (let controlElement of neuronControlElements) {
+            controlElement.mousePressed();
+        }
+    } else if (selectedNavbarTab == "MENU_NETWORK") {
+        for (let controlElement of settingsControlElements) {
+            controlElement.mousePressed();
+        }
     }
 }
 
 function touchStarted() {
-    for (let controlElement of controlElements) {
-        controlElement.touchStarted();
+    if (mouseY < 50) {
+        if (mouseX < windowWidth/2) {
+            selectedNavbarTab = "MENU_CURRENTS";
+        } else {
+            selectedNavbarTab = "MENU_NETWORK";
+        }
+    }
+    if (selectedNavbarTab == "MENU_CURRENTS") {
+        for (let controlElement of neuronControlElements) {
+            controlElement.touchStarted();
+        }
+    } else if (selectedNavbarTab == "MENU_NETWORK") {
+        for (let controlElement of settingsControlElements) {
+            controlElement.touchStarted();
+        }
     }
 }
 
 function mouseReleased() {
-    for (let controlElement of controlElements) {
-        controlElement.mouseReleased();
+    if (selectedNavbarTab == "MENU_CURRENTS") {
+        for (let controlElement of neuronControlElements) {
+            controlElement.mouseReleased();
+        }
+    } else if (selectedNavbarTab == "MENU_NETWORK") {
+        for (let controlElement of settingsControlElements) {
+            controlElement.mouseReleased();
+        }
     }
 }
 
 function touchEnded() {
-    for (let controlElement of controlElements) {
-        controlElement.touchEnded();
+    if (selectedNavbarTab == "MENU_CURRENTS") {
+        for (let controlElement of neuronControlElements) {
+            controlElement.touchEnded();
+        }
+    } else if (selectedNavbarTab == "MENU_NETWORK") {
+        for (let controlElement of settingsControlElements) {
+            controlElement.touchEnded();
+        }
     }
 }
 
 function mouseDragged() {
-    for (let controlElement of controlElements) {
-        controlElement.mouseDragged();
+    if (selectedNavbarTab == "MENU_CURRENTS") {
+        for (let controlElement of neuronControlElements) {
+            controlElement.mouseDragged();
+        }
+    } else if (selectedNavbarTab == "MENU_NETWORK") {
+        for (let controlElement of settingsControlElements) {
+            controlElement.mouseDragged();
+        }
     }
 }
 
 function touchMoved() {
-    for (let controlElement of controlElements) {
-        controlElement.touchMoved();
+    if (selectedNavbarTab == "MENU_CURRENTS") {
+        for (let controlElement of neuronControlElements) {
+            controlElement.touchMoved();
+        }
+    } else if (selectedNavbarTab == "MENU_NETWORK") {
+        for (let controlElement of settingsControlElements) {
+            controlElement.touchMoved();
+        }
     }
 }
 
 function windowResized() {
     resizeCanvas(windowWidth, windowHeight);
-    createControlElements();
+    if (neuronControlElements.length > 0) {
+        createNeuronControlElements();
+    }
 }

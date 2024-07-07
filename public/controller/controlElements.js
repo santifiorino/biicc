@@ -52,8 +52,11 @@ class SliderElement {
 }
 
 class Slider extends SliderElement {
-    constructor(id, x, y, w, h, min, max) {
+    constructor(id, x, y, w, h, min, max, neuronSelector=false) {
         super(id, x, y, w, h);
+        this.min = min;
+        this.max = max;
+        this.neuronSelector = neuronSelector;
     }
 
     draw() {
@@ -64,45 +67,59 @@ class Slider extends SliderElement {
         rect(this.x, this.y, this.w, this.h);
         // value
         fill("#933129");
-        rect(this.x, this.y, map(neuronValues[this.id], 0, 1, 0, this.w), this.h);
+        rect(this.x, this.y, map(settings[this.id], this.min, this.max, 0, this.w), this.h);
         // circle
         fill("#D92919");
-        ellipse(this.x + map(neuronValues[this.id], 0, 1, 0, this.w), this.y + this.h/2, this.h + 10, this.h + 10);
+        ellipse(this.x + map(settings[this.id], this.min, this.max, 0, this.w), this.y + this.h/2, this.h + 10, this.h + 10);
 
-        drawIdSelector(this.x + this.w + 20, this.y, this.id);
+        if (this.neuronSelector) {
+            drawIdSelector(this.x + this.w + 20, this.y, this.id);
+        } else {
+            textSize(20)
+            fill(255)
+            text(settings[this.id].toFixed(3).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, ''), this.x + this.w + 26, this.y + 16)
+        }
     }
 
     handlePress() {
-        if (dist(mouseX, mouseY, this.x + map(neuronValues[this.id], 0, 1, 0, this.w), this.y + this.h/2) < (this.h + 10) / 2) {
+        if (dist(mouseX, mouseY, this.x + map(settings[this.id], this.min, this.max, 0, this.w), this.y + this.h/2) < (this.h + 10) / 2) {
             this.dragging = true;
-            const newValue = constrain(map(mouseX, this.x, this.x + this.w, 0, 1), 0, 1);
+            const newValue = constrain(map(mouseX, this.x, this.x + this.w, this.min, this.max), this.min, this.max);
             this.updateValue(newValue);
         }
+        if (!this.neuronSelector) return;
+        let id = parseInt(this.id.split(' ')[1]);
+        
         if (inSquareBounds(this.x + this.w + 20, this.y)){
-            if (this.id > 0)
-                this.id -= 1;
+            if (id > 1)
+                id -= 1;
         }
         if (inSquareBounds(this.x + this.w + 84, this.y)) {
-            if (this.id < neuronValues.length-1)
-                this.id += 1;
+            if (id < neuronsAmount-1)
+                id += 1;
         }
+        this.id = "dc " + id;
     }
 
     handleDrag() {
         if (this.dragging) {
-            const newValue = constrain(map(mouseX, this.x, this.x + this.w, 0, 1), 0, 1);
+            const newValue = constrain(map(mouseX, this.x, this.x + this.w, this.min, this.max), this.min, this.max);
             this.updateValue(newValue);
         }
     }
 
     updateValue(value) {
-        neuronValues[this.id] = value;
+        settings[this.id] = value;
         const oscMessage = {
-            address: "/sliders/" + (this.id+1),
+            address: "/update",
             args: [
                 {
+                    type: "s",
+                    value: this.id
+                },
+                {
                     type: "f",
-                    value: neuronValues[this.id]
+                    value: settings[this.id]
                 }
             ]
         };
@@ -111,9 +128,11 @@ class Slider extends SliderElement {
 }
 
 class Pad extends SliderElement {
-    constructor(id, id2, x, y, w, h) {
+    constructor(id, id2, x, y, w, h, min, max) {
         super(id, x, y, w, h);
         this.id2 = id2;
+        this.min = min;
+        this.max = max;
     }
 
     draw() {
@@ -124,11 +143,11 @@ class Pad extends SliderElement {
         fill("#D92919");
 
         stroke("#933129");
-        line(this.x + map(neuronValues[this.id], 0, 1, 0, this.w), this.y, this.x + map(neuronValues[this.id], 0, 1, 0, this.w), this.y + this.h);
-        line(this.x, this.y + map(neuronValues[this.id2], 0, 1, 0, this.h), this.x + this.w, this.y + map(neuronValues[this.id2], 0, 1, 0, this.h));
+        line(this.x + map(settings[this.id], this.min, this.max, 0, this.w), this.y, this.x + map(settings[this.id], this.min, this.max, 0, this.w), this.y + this.h);
+        line(this.x, this.y + map(settings[this.id2], this.min, this.max, 0, this.h), this.x + this.w, this.y + map(settings[this.id2], this.min, this.max, 0, this.h));
 
         stroke(0);
-        ellipse(this.x + map(neuronValues[this.id], 0, 1, 0, this.w), this.y + map(neuronValues[this.id2], 0, 1, 0, this.h), 30, 30);
+        ellipse(this.x + map(settings[this.id], this.min, this.max, 0, this.w), this.y + map(settings[this.id2], this.min, this.max, 0, this.h), 30, 30);
 
         fill(255);
         text("x-axis:", this.x + this.w + 20, this.y + 16);
@@ -138,72 +157,83 @@ class Pad extends SliderElement {
     }
 
     handlePress() {
-        if (dist(mouseX, mouseY, this.x + map(neuronValues[this.id], 0, 1, 0, this.w), this.y + map(neuronValues[this.id2], 0, 1, 0, this.h)) < 15) {
+        if (dist(mouseX, mouseY, this.x + map(settings[this.id], this.min, this.max, 0, this.w), this.y + map(settings[this.id2], this.min, this.max, 0, this.h)) < 15) {
             this.dragging = true;
-            const newValueX = constrain(map(mouseX, this.x, this.x + this.w, 0, 1), 0, 1);
-            const newValueY = constrain(map(mouseY, this.y, this.y + this.h, 0, 1), 0, 1);
+            const newValueX = constrain(map(mouseX, this.x, this.x + this.w, this.min, this.max), this.min, this.max);
+            const newValueY = constrain(map(mouseY, this.y, this.y + this.h, this.min, this.max), this.min, this.max);
             this.updateValue(newValueX, newValueY);
         }
-
+        let id = parseInt(this.id.split(' ')[1]);
+        let id2 = parseInt(this.id2.split(' ')[1]);
         if (inSquareBounds(this.x + this.w + 84, this.y + 30)) {
-            if (this.id != neuronValues.length-1) {
-                if (this.id + 1 != this.id2) {
-                    this.id += 1;
-                } else if (this.id < neuronValues.length-2) {
-                    this.id += 2;
+            if (id != neuronsAmount-1) {
+                if (id + 1 != id2) {
+                    id += 1;
+                } else if (id < neuronsAmount-2) {
+                    id += 2;
                 }
             }
         }
         if (inSquareBounds(this.x + this.w + 84, this.y + 100)) {
-            if (this.id2 < neuronValues.length-1) {
-                if (this.id2 + 1 != this.id) {
-                    this.id2 += 1;
-                } else if (this.id2 < neuronValues.length-2) {
-                    this.id2 += 2;
+            if (id2 < neuronsAmount-1) {
+                if (id2 + 1 != id) {
+                    id2 += 1;
+                } else if (id2 < neuronsAmount-2) {
+                    id2 += 2;
                 }
             }
         }
         if (inSquareBounds(this.x + this.w + 20, this.y + 30)) {
-            if (this.id > 0) {
-                if (this.id - 1 != this.id2) {
-                    this.id -= 1;
-                } else if (this.id > 1) {
-                    this.id -= 2;
+            if (id > 1) {
+                if (id - 1 != id2) {
+                    id -= 1;
+                } else if (id > 2) {
+                    id -= 2;
                 }
             }
         }
         if (inSquareBounds(this.x + this.w + 20, this.y + 100)) {
-            if (this.id2 > 0) {
-                if (this.id2 - 1 != this.id) {
-                    this.id2 -= 1;
-                } else if (this.id2 > 1) {
-                    this.id2 -= 2;
+            if (id2 > 0) {
+                if (id2 - 1 != id) {
+                    id2 -= 1;
+                } else if (id2 > 1) {
+                    id2 -= 2;
                 }
             }
         }
+        this.id = "dc " + id;
+        this.id2 = "dc " + id2;
     }
 
     handleDrag() {
         if (this.dragging) {
-            const newValueX = constrain(map(mouseX, this.x, this.x + this.w, 0, 1), 0, 1);
-            const newValueY = constrain(map(mouseY, this.y, this.y + this.h, 0, 1), 0, 1);
+            const newValueX = constrain(map(mouseX, this.x, this.x + this.w, this.min, this.max), this.min, this.max);
+            const newValueY = constrain(map(mouseY, this.y, this.y + this.h, this.min, this.max), this.min, this.max);
             this.updateValue(newValueX, newValueY);
         }
     }
 
     updateValue(valueX, valueY) {
-        neuronValues[this.id] = valueX;
-        neuronValues[this.id2] = valueY;
+        settings[this.id] = valueX;
+        settings[this.id2] = valueY;
         const oscMessage = {
-            address: "/pads/" + (this.id+1) + "/" + (this.id2+1),
+            address: "/update",
             args: [
                 {
-                    type: "f",
-                    value: neuronValues[this.id]
+                    type: "s",
+                    value: this.id
                 },
                 {
                     type: "f",
-                    value: neuronValues[this.id2]
+                    value: settings[this.id]
+                },
+                {
+                    type: "s",
+                    value: this.id2
+                },
+                {
+                    type: "f",
+                    value: settings[this.id2]
                 }
             ]
         };
@@ -217,6 +247,7 @@ function inSquareBounds(x, y) {
 }
 
 function drawIdSelector(x, y, id) {
+    id = parseInt(id.split(' ')[1]);
     textSize(20);
     // squares
     fill("#933129");
@@ -225,6 +256,6 @@ function drawIdSelector(x, y, id) {
     // text
     fill(255);
     text("-", x + 6, y + 16);
-    text((id+1 > 9) ? (id+1) : "0" + (id+1), x + 30, y + 16);
+    text(id > 9 ? id : "0" + id, x + 30, y + 16);
     text("+", x + 68, y + 16);
 }
