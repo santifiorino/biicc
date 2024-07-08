@@ -95,7 +95,7 @@ class Slider extends SliderElement {
                 id -= 1;
         }
         if (inSquareBounds(this.x + this.w + 84, this.y)) {
-            if (id < neuronsAmount-1)
+            if (id < neuronsAmount)
                 id += 1;
         }
         this.id = "dc " + id;
@@ -166,19 +166,19 @@ class Pad extends SliderElement {
         let id = parseInt(this.id.split(' ')[1]);
         let id2 = parseInt(this.id2.split(' ')[1]);
         if (inSquareBounds(this.x + this.w + 84, this.y + 30)) {
-            if (id != neuronsAmount-1) {
+            if (id != neuronsAmount) {
                 if (id + 1 != id2) {
                     id += 1;
-                } else if (id < neuronsAmount-2) {
+                } else if (id < neuronsAmount-1) {
                     id += 2;
                 }
             }
         }
         if (inSquareBounds(this.x + this.w + 84, this.y + 100)) {
-            if (id2 < neuronsAmount-1) {
+            if (id2 < neuronsAmount) {
                 if (id2 + 1 != id) {
                     id2 += 1;
-                } else if (id2 < neuronsAmount-2) {
+                } else if (id2 < neuronsAmount-1) {
                     id2 += 2;
                 }
             }

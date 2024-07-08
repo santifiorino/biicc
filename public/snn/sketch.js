@@ -70,12 +70,27 @@ function parseOscMessage(oscMsg) {
                 const setting = oscMsg.args[i].value;
                 const value = oscMsg.args[i+1].value;
                 settings[setting] = value;
-                if (setting == "syn_type") NN.set_syn_type(value);
-                if (setting == "dropout") NN.set_dropout(value);
-                if (setting == "weight mean") NN.set_mean_weight(value);
-                if (setting == "weight size") NN.set_size_weight(value);
-                if (setting == "delay mean") NN.set_mean_delay(value);
-                if (setting == "delay size") NN.set_size_delay(value);
+                if (setting == "syn type") NN.set_syn_type(value);
+                if (setting == "dropout") {
+                    NN.set_dropout(value);
+                    weights_to_nodes(true);
+                }
+                if (setting == "weight mean") {
+                    NN.set_mean_weight(value);
+                    weights_to_nodes(true);
+                }
+                if (setting == "weight size") {
+                    NN.set_size_weight(value);
+                    weights_to_nodes(true);
+                }
+                if (setting == "delay mean") {
+                    NN.set_mean_delay(value);
+                    delay_to_pulses();
+                }
+                if (setting == "delay size") {
+                    NN.set_size_delay(value);
+                    delay_to_pulses();
+                }
                 if (setting == "syn tau") NN.set_syn_tau(value);
             }
             break;
@@ -103,6 +118,9 @@ class EventTracker {
     constructor() {
         this.events = [];
         this.deltas = [];
+        this.numberOfEventsGraph = [];
+        this.deltaTimeMeanGraph = [];
+        this.deltaTimeStdGraph = [];
     }
 
     addEvent(neuronId) {
@@ -114,20 +132,53 @@ class EventTracker {
 
     displayInformation() {
         fill(255);
-        text("#Events (10s): " + this.events.length, width - 300, 80);
-        const mean = this.deltas.reduce((acc, val) => acc + val, 0) / this.deltas.length;
-        text("Δt mean (10s): " + int(mean), width - 300, 130);
-        const std = Math.sqrt(
+        
+        let numberOfEvents = this.events.length;
+        let deltaTimeMean = this.deltas.reduce((acc, val) => acc + val, 0) / this.deltas.length;
+        if (!deltaTimeMean) deltaTimeMean = 0;
+        let deltaTimeStd = Math.sqrt(
             this.deltas
-                .reduce((acc, val) => acc.concat((val - mean) ** 2), [])
+                .reduce((acc, val) => acc.concat((val - deltaTimeMean) ** 2), [])
                 .reduce((acc, val) => acc + val, 0) / this.deltas.length
         );
-        text("Δt std (10s): " + int(std), width - 300, 180);
-        // return Math.sqrt(
-        //     this.deltas
-        //         .reduce((acc, val) => acc.concat((val - mean) ** 2), [])
-        //         .reduce((acc, val) => acc + val, 0) / this.deltas.length
-        // );
+        if (!deltaTimeStd) deltaTimeStd = 0;
+
+        this.numberOfEventsGraph.push(numberOfEvents);
+        this.deltaTimeMeanGraph.push(deltaTimeMean);
+        this.deltaTimeStdGraph.push(deltaTimeStd);
+        if (this.numberOfEventsGraph.length == 301) {
+            this.numberOfEventsGraph.shift();
+            this.deltaTimeMeanGraph.shift();
+            this.deltaTimeStdGraph.shift();
+        }
+        
+        text("#Events (10s): " + numberOfEvents, windowWidth - 300, 80);
+        text("Δt mean (10s): " + int(deltaTimeMean), width - 300, 270);
+        text("Δt std (10s): " + int(deltaTimeStd), width - 300, 460);
+        
+        strokeWeight(2);
+        stroke(20);
+        for (let i = 0; i < 5; i++) {
+            line(windowWidth - 300, 200 - i*20, windowWidth-20, 200 - i*20);
+            line(windowWidth - 300, 400 - i*20, windowWidth-20, 400 - i*20);
+            line(windowWidth - 300, 600 - i*20, windowWidth-20, 600 - i*20);
+        }
+
+        strokeWeight(0);
+        for (let i = 0; i < this.numberOfEventsGraph.length; i++) {
+            fill("red");
+            ellipse(windowWidth-300 + 280/300*i, 200 - map(this.numberOfEventsGraph[i], 0, n_neurons*50, 0, 80), 3, 3)
+            fill("green");
+            ellipse(windowWidth-300 + 280/300*i, 400 - map(this.deltaTimeMeanGraph[i], 0, 500, 0, 80), 3, 3)
+            fill("blue");
+            ellipse(windowWidth-300 + 280/300*i, 600 - map(this.deltaTimeStdGraph[i], 0, 500, 0, 80), 3, 3)
+        }
+        fill("red");
+        ellipse(windowWidth-300 + 280/300*(this.numberOfEventsGraph.length-1), 200 - map(this.numberOfEventsGraph[this.numberOfEventsGraph.length - 1], 0, n_neurons*50, 0, 80), 10, 10);
+        fill("green");
+        ellipse(windowWidth-300 + 280/300*(this.deltaTimeMeanGraph.length-1), 400 - map(this.deltaTimeMeanGraph[this.deltaTimeMeanGraph.length - 1], 0, 500, 0, 80), 10, 10);
+        fill("blue");
+        ellipse(windowWidth-300 + 280/300*(this.deltaTimeStdGraph.length-1), 600 - map(this.deltaTimeStdGraph[this.deltaTimeStdGraph.length - 1], 0, 500, 0, 80), 10, 10);
     }
 
     update() {
@@ -240,9 +291,9 @@ function setup() {
 
   for (let i = 0; i < NN.neurons.length; i++) {
     let y = -i * score_sep + (NN.neurons.length - 1) * score_sep / 2
-    scope = new Scope(-width / 2 + net_score_border, y, width - net_score_border - marginx, 40);
+    scope = new Scope(-width / 2 + net_score_border, y, width - net_score_border - marginx - 300, 40);
     scopes.push(scope);
-    score = new Score(-width / 2 + net_score_border, y, width - net_score_border - marginx, 40);
+    score = new Score(-width / 2 + net_score_border, y, width - net_score_border - marginx - 300, 40);
     scores.push(score);
   }
 
@@ -477,17 +528,17 @@ function draw() {
     pulses[k].draw(wnorm)
   }
   for (let k = 0; k < NN.synapses.length; k++) {
-    knobs[k].draw(mouseX - width / 2, mouseY - height / 2)
+    knobs[k].draw(mouseX - windowWidth / 2, mouseY - height / 2)
   }
 
-  translate(-width / 2, -height / 2);
+  translate(-windowWidth / 2, -height / 2);
 
   fill(0);
-  rect(width - 320, 0, 320, 200);
+  rect(windowWidth - 320, 0, 320, windowHeight);
 
   fill(255);
   textSize(32);
-  text("Sim ID: " + simulationId, width - 300, 30);
+  text("Sim ID: " + simulationId, windowWidth - 300, 30);
 
   eventTracker.update();
   eventTracker.displayInformation();
