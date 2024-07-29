@@ -9,14 +9,12 @@ NeuralNetwork.prototype.add_neuron = function () {
 }
 
 NeuralNetwork.prototype.add_neurons = function (N) {
-
     for (let i = 0; i < N; i++) {
         this.add_neuron();
     }
 }
 
 NeuralNetwork.prototype.add_synapse = function (from, to) {
-
     let S = new Synapse(from, to);
     this.synapses.push(S);
 }
@@ -84,14 +82,12 @@ NeuralNetwork.prototype.set_dropout = function (prob) {
 }
 
 NeuralNetwork.prototype.set_random_weight = function (mean, size) {
-
     for (let k = 0; k < this.synapses.length; k++) {
         this.synapses[k].set_random_weight(mean - size / 2, mean + size / 2);
     }
 }
 
 NeuralNetwork.prototype.set_random_delay = function (mean, size) {
-
     for (let k = 0; k < this.synapses.length; k++) {
         this.synapses[k].set_random_delay(mean - size / 2, mean + size / 2);
     }
@@ -308,7 +304,6 @@ Neuron.prototype.set_event_callback = function (cb) {
 }
 
 Neuron.prototype.event = function () {
-    eventTracker.addEvent(this.neuronId);
     if (this.event_callback && typeof this.event_callback === "function") {
         this.event_callback();
     }

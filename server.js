@@ -14,18 +14,6 @@ server.listen(PORT, () => {
 
 app.use(express.static('public'));
 
-app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/public/index.html');
-});
-
-app.get('/snn', (req, res) => {
-    res.sendFile(__dirname + '/public/simulation.html');
-});
-
-app.get('/controller', (req, res) => {
-    res.sendFile(__dirname + '/public/controller/index.html');
-});
-
 let simulations = {}; // { simulationId: simulationWs }
 let controllers = {}; // { controllerId: controllerWs }
 let connections = {}; // { controllerId: simulationId }

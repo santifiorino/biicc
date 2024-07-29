@@ -257,7 +257,10 @@ function setup() {
     else
       nota = escala_mayor[0]
     let voice = new Voice(nota, 1 / 16, casio);
-    NN.neurons[i].set_event_callback(function () { voice.trigger(); });
+    NN.neurons[i].set_event_callback(function () {
+        voice.trigger();
+        eventTracker.addEvent(i)
+    });
     voices.push(voice);
     let circle = new Circle(nodes[i].pos, settings['circle size']);
     circles.push(circle);
