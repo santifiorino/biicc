@@ -131,6 +131,7 @@ class EventTracker {
     }
 
     displayInformation() {
+        // TODO: make an abstraction for each metric to make it easier to add new ones and remove repeated code
         fill(255);
         
         let numberOfEvents = this.events.length;
