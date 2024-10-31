@@ -25,7 +25,7 @@ Para utilizarlo, se debe tener abierta en un navegador una instancia de la simul
 
 #### Simulación
 
-<img src="https://i.imgur.com/J2Zid1V.png" height="500px" />
+<img src="https://i.imgur.com/J2Zid1V.png" width="1000px" />
 
 La simulación consiste en un modelo de Spiking Neural Networks (SNN). En esta simulación, a cada neurona se le puede asignar un sonido que se reproducirá cuando la neurona se active. Las neuronas interactúan entre sí en base a diferentes parámetros que se pueden controlar desde la ruta del controlador. También es posible controlar individualmente cada neurona para que emita un pulso con cierta frecuencia. Con los parámetros de la red y los de las neuronas, es posible crear una gran variedad de combinaciones que generan patrones diversos.
 
@@ -33,7 +33,7 @@ En la parte derecha de la simulación se visualizan distintas métricas calculad
 
 #### Controlador
 
-<img src="https://i.imgur.com/p6ZFeF6.png" height="500px" />
+<img src="https://i.imgur.com/p6ZFeF6.png" width="750px" />
 
 El controlador tiene dos páginas principales: "Currents" y "Network".
 
@@ -51,7 +51,7 @@ Otro problema era que, cuando un controlador se conectaba a una simulación, com
 
 El esquema general de comunicación es el siguiente:
 
-<img src="https://i.imgur.com/Q2sKzOK.png" height="500px" />
+<img src="https://i.imgur.com/Q2sKzOK.png" width="1000px" />
 
 La comunicación se basa completamente en mensajes [OSC](https://es.wikipedia.org/wiki/Open_Sound_Control), los cuales son transmitidos mediante WebSockets. En un principio como controlador consideramos utilizar aplicaciones móbiles existentes, que envían mensajes OSC mediante UDP . Sin embargo, dado que la simulación se ejecuta en el navegador del cliente, lo cual queríamos mantener para asegurar la facilidad de uso, no es posible abrir un puerto UDP desde el navegador para que la simulación reciba los mensajes entrantes. Por esa razón las aplicaciones existentes no se ajustaban a nuestro caso de uso, y desarrollamos un controlador propio. Tanto el controlador como el servidor hacen uso de la biblioteca [osc.js](https://www.npmjs.com/package/osc), que permite el intercambio de mensajes OSC mediante WebSockets, tecnología que sí se puede usar en cualquier navegador donde se ejecute cada simulación.
 
