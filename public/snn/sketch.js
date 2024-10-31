@@ -106,6 +106,28 @@ function parseOscMessage(oscMsg) {
                     value: settings[setting]
                 });
             }
+            for (const synapse of NN.synapses) {
+                args.push({
+                    type: "s",
+                    value: "synapse"
+                })
+                args.push({
+                    type: "i",
+                    value: synapse.from.id
+                })
+                args.push({
+                    type: "i",
+                    value: synapse.to.id
+                })
+                args.push({
+                    type: "f",
+                    value: synapse.weight
+                })
+                args.push({
+                    type: "f",
+                    value: synapse.delay
+                })
+            }
             oscWebSocket.send({
                 address: "/getState",
                 args: args

@@ -41,7 +41,6 @@ NeuralNetwork.prototype.add_all_synapses = function () {
     }
 }
 
-
 NeuralNetwork.prototype.print = function () {
     for (let k = 0; k < this.synapses.length; k++) {
         console.log(k, 'W:', this.synapses[k].weight);
