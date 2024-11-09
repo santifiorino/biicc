@@ -11,7 +11,7 @@ let maxDC = 150;
 
 let neuronControlElements = []
 let synapseControlElements = []
-let settingsControlElements = []
+let networkControlElements = []
 
 
 function parseOscMessage(oscMsg) {
@@ -25,7 +25,7 @@ function parseOscMessage(oscMsg) {
 
                     settings[setting] = value
                     // update control elements controlling this setting
-                    for (let controlElement of neuronControlElements.concat(settingsControlElements)) {
+                    for (let controlElement of neuronControlElements.concat(networkControlElements)) {
                         if ((controlElement.parameter || "") == setting) {
                             controlElement.value = value
                         }
@@ -49,7 +49,18 @@ function parseOscMessage(oscMsg) {
                             synapses_delays[from][to] = oscMsg.args[2].value
                             break;
                     }
-                    // TODO: update control elements controlling this synapse
+
+                    if (synapseControlElements[2].value == from + 1 && synapseControlElements[3].value == to + 1) {
+                        switch (addressParts[3]) {
+                            case "weight":
+                                synapseControlElements[0].value = oscMsg.args[2].value
+                                break
+                            case "delay":
+                                synapseControlElements[1].value = oscMsg.args[2].value
+                                break
+                        }
+                    }
+                    
                     break
             }
             break
@@ -61,8 +72,8 @@ function parseOscMessage(oscMsg) {
                     settings[setting] = value
                     if (/^dc \d+$/.test(setting)) { // dc + number
                         neuronsAmount++
-                        synapses_weights = Array(neuronsAmount+1).fill().map(() => Array(neuronsAmount+1).fill(-1))
-                        synapses_delays = Array(neuronsAmount+1).fill().map(() => Array(neuronsAmount+1).fill(-1))
+                        synapses_weights = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(-1))
+                        synapses_delays = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(-1))
                         createNeuronControlElements()
                         createSynapseControlElements()
                     } else {
@@ -75,13 +86,19 @@ function parseOscMessage(oscMsg) {
                     switch (addressParts[3]) {
                         case "weight":
                             synapses_weights[from][to] = oscMsg.args[2].value
+                            if (from == 0 && to == 1) {
+                                synapseControlElements[0].value = oscMsg.args[2].value
+                            }
                             break
                         case "delay":
                             synapses_delays[from][to] = oscMsg.args[2].value
+                            if (from == 0 && to == 1) {
+                                synapseControlElements[1].value = oscMsg.args[2].value
+                            }
                             break
                     }
-                    // TODO: update control elements controlling this synapse
-                }
+                    break
+            }
             break
     }
 }
@@ -233,24 +250,24 @@ function updateSynapseDelay(from, to, value) {
 
 function createSynapseControlElements() {
     synapseControlElements = [];
-    let weightSlider = new Slider(synapses_weights[1][2], 50, 260, 250, 20, 0, 80, null)
-    let delaySlider = new Slider(synapses_delays[1][2], 50, 340, 250, 20, 0, 80, null)
+    let weightSlider = new Slider(synapses_weights[0][1], 50, 260, 250, 20, 0, 80, null)
+    let delaySlider = new Slider(synapses_delays[0][1], 50, 340, 250, 20, 0, 5, null)
 
     let idSelectorFrom = new IdSelector(1, 50, 150, 1, neuronsAmount, () => {
-        weightSlider.value = synapses_weights[idSelectorFrom.value][idSelectorTo.value]
-        delaySlider.value = synapses_delays[idSelectorFrom.value][idSelectorTo.value]
+        weightSlider.value = synapses_weights[idSelectorFrom.value - 1][idSelectorTo.value - 1]
+        delaySlider.value = synapses_delays[idSelectorFrom.value - 1][idSelectorTo.value - 1]
     })
     let idSelectorTo = new IdSelector(2, 220, 150, 1, neuronsAmount, () => {
-        weightSlider.value = synapses_weights[idSelectorFrom.value][idSelectorTo.value]
-        delaySlider.value = synapses_delays[idSelectorFrom.value][idSelectorTo.value]
+        weightSlider.value = synapses_weights[idSelectorFrom.value - 1][idSelectorTo.value - 1]
+        delaySlider.value = synapses_delays[idSelectorFrom.value - 1][idSelectorTo.value - 1]
     })
 
     weightSlider.onChange = (val) => {
-        updateSynapseWeight(idSelectorFrom.value, idSelectorTo.value, val)
+        updateSynapseWeight(idSelectorFrom.value - 1, idSelectorTo.value - 1, val)
     }
     
     delaySlider.onChange = (val) => {
-        updateSynapseDelay(idSelectorFrom.value, idSelectorTo.value, val)
+        updateSynapseDelay(idSelectorFrom.value - 1, idSelectorTo.value - 1, val)
     }
 
     synapseControlElements.push(weightSlider)
@@ -260,48 +277,48 @@ function createSynapseControlElements() {
 }
 
 function createNetworkControlElements() {
-    settingsControlElements = [];
+    networkControlElements = [];
     let slider = new Slider(settings["syn type"], 50, 140, 250, 20, 0, 1, (val) => {
         updateSetting("syn type", val)
     })
     slider.parameter = "syn type"
-    settingsControlElements.push(slider)
+    networkControlElements.push(slider)
 
     slider = new Slider(settings["dropout"], 50, 200, 250, 20, 0, 1, (val) => {
         updateSetting("dropout", val)
     })
     slider.parameter = "dropout"
-    settingsControlElements.push(slider)
+    networkControlElements.push(slider)
 
     slider = new Slider(settings["weight mean"], 50, 260, 250, 20, 0, 80, (val) => {
         updateSetting("weight mean", val)
     })
     slider.parameter = "weight mean"
-    settingsControlElements.push(slider)
+    networkControlElements.push(slider)
 
     slider = new Slider(settings["weight size"], 50, 320, 250, 20, 0, 40, (val) => {
         updateSetting("weight size", val)
     })
     slider.parameter = "weight size"
-    settingsControlElements.push(slider)
+    networkControlElements.push(slider)
 
     slider = new Slider(settings["delay mean"], 50, 380, 250, 20, 0.01, 2, (val) => {
         updateSetting("delay mean", val)
     })
     slider.parameter = "delay mean"
-    settingsControlElements.push(slider)
+    networkControlElements.push(slider)
 
     slider = new Slider(settings["delay size"], 50, 440, 250, 20, 0.001, 0.5, (val) => {
         updateSetting("delay size", val)
     })
     slider.parameter = "delay size"
-    settingsControlElements.push(slider)
+    networkControlElements.push(slider)
 
     slider = new Slider(settings["syn tau"], 50, 510, 250, 20, 0.5, 2, (val) => {
         updateSetting("syn tau", val)
     })
     slider.parameter = "syn tau"
-    settingsControlElements.push(slider)
+    networkControlElements.push(slider)
 }
 
 function draw() {
@@ -328,10 +345,16 @@ function draw() {
             for (let controlElement of synapseControlElements) {
                 controlElement.draw();
             }
+            textSize(20);
+            fill(255);
+            for (let i = 0; i < 2; ++i) {
+                controlElement = synapseControlElements[i]
+                text(controlElement.value.toFixed(3).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, ''), synapseControlElements[i].x + synapseControlElements[i].w + 20, synapseControlElements[i].y + 16)
+            }
             break;
         case "MENU_NETWORK":
             rect(2*windowWidth/3, 0, windowWidth/3, 50);
-            if (settingsControlElements.length > 0) {
+            if (networkControlElements.length > 0) {
                 textSize(20);
                 fill(255);
                 text("syn type", 50, 130)
@@ -342,7 +365,7 @@ function draw() {
                 text("delay size", 50, 430)
                 text("syn tau", 50, 490)
             }
-            for (let controlElement of settingsControlElements) {
+            for (let controlElement of networkControlElements) {
                 controlElement.draw()
                 textSize(20);
                 fill(255);
@@ -388,7 +411,7 @@ function mousePressed() {
             }
         } else {
             selectedNavbarTab = "MENU_NETWORK"
-            for (let controlElement of settingsControlElements) {
+            for (let controlElement of networkControlElements) {
                 controlElement.mousePressed()
             }
         }
@@ -402,7 +425,7 @@ function mousePressed() {
             controlElement.mousePressed()
         }
     } else {
-        for (let controlElement of settingsControlElements) {
+        for (let controlElement of networkControlElements) {
             controlElement.mousePressed()
         }
     }
@@ -422,7 +445,7 @@ function mouseReleased() {
             controlElement.mouseReleased()
         }
     } else {
-        for (let controlElement of settingsControlElements) {
+        for (let controlElement of networkControlElements) {
             controlElement.mouseReleased();
         }
     }
@@ -442,7 +465,7 @@ function mouseDragged() {
             controlElement.mouseDragged()
         }
     } else {
-        for (let controlElement of settingsControlElements) {
+        for (let controlElement of networkControlElements) {
             controlElement.mouseDragged()
         }
     }

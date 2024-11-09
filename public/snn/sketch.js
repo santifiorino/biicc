@@ -95,8 +95,18 @@ function parseOscMessage(oscMsg) {
           if (setting == "syn tau") NN.set_syn_tau(value)
           break
         case "synapse":
-          // TODO: update synapse weight/delay
-          console.log(oscMsg)
+          for (const synapse of NN.synapses) {
+            if (synapse.from.id == oscMsg.args[0].value && synapse.to.id == oscMsg.args[1].value) {
+              switch (addressParts[3]) {
+                case "weight":
+                  synapse.set_weight(oscMsg.args[2].value)
+                  break
+                case "delay":
+                  synapse.set_delay(oscMsg.args[2].value)
+                  break
+              }
+            }
+          }
           break
       }
       break
