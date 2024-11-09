@@ -2,8 +2,9 @@ let oscWebSocket;
 let simulationInput, connectButton;
 let selectedNavbarTab = "MENU_CURRENTS"
 
-let controllerId;
+let controllerId
 let settings = {}
+let neuronsAmount = 0
 let synapses_weights = []
 let synapses_delays = []
 let maxDC = 150;
@@ -17,45 +18,71 @@ function parseOscMessage(oscMsg) {
     const addressParts = oscMsg.address.split("/");
     switch (addressParts[1]) {
         case "update":
-            for (let i = 0; i < oscMsg.args.length; i+=2) {
-                settings[oscMsg.args[i].value] = oscMsg.args[i+1].value
-                for (let controlElement of neuronControlElements.concat(settingsControlElements)) {
-                    if ((controlElement.parameter || "") == oscMsg.args[i].value) {
-                        controlElement.value = oscMsg.args[i+1].value
-                    }
-                    if ((controlElement.parameterX || "") == oscMsg.args[i].value) {
-                        controlElement.valueX = oscMsg.args[i+1].value
-                    }
-                    if ((controlElement.parameterY || "") == oscMsg.args[i].value) {
-                        controlElement.valueY = oscMsg.args[i+1].value
-                    }
-                }
-            }
-            break;
-        case "getState":
-            const splitIndex = oscMsg.args.findIndex(item => item.type == "s" && item.value == "synapse")
-            const stateArray = oscMsg.args.slice(0, splitIndex)
-            const synapseArray = oscMsg.args.slice(splitIndex)
-            
-            settings = {}
-            neuronsAmount = 0;
-            for (let i = 0; i < stateArray.length; i+=2) {
-                settings[stateArray[i].value] = stateArray[i+1].value;
-                if (stateArray[i].value.startsWith("dc"))
-                    neuronsAmount++;
-            }
-            neuronsAmount-- // "dc all" is not an actual neuron
+            switch (addressParts[2]) {
+                case "setting":
+                    const setting = addressParts[3]
+                    let value = oscMsg.args[0].value
 
-            synapses_weights = Array(neuronsAmount+1).fill().map(() => Array(neuronsAmount+1).fill(-1))
-            synapses_delays = Array(neuronsAmount+1).fill().map(() => Array(neuronsAmount+1).fill(-1))
-            for (let i = 0; i < synapseArray.length; i+=5) {
-                synapses_weights[synapseArray[i+1].value][synapseArray[i+2].value] = synapseArray[i+3].value
-                synapses_delays[synapseArray[i+1].value][synapseArray[i+2].value] = synapseArray[i+4].value
+                    settings[setting] = value
+                    // update control elements controlling this setting
+                    for (let controlElement of neuronControlElements.concat(settingsControlElements)) {
+                        if ((controlElement.parameter || "") == setting) {
+                            controlElement.value = value
+                        }
+                        if ((controlElement.parameterX || "") == setting) {
+                            controlElement.valueX = value
+                        }
+                        if ((controlElement.parameterY || "") == setting) {
+                            controlElement.valueY = value
+                        }
+                    }
+                    break
+
+                case "synapse":
+                    const from = oscMsg.args[0].value
+                    const to = oscMsg.args[1].value
+                    switch (addressParts[3]) {
+                        case "weight":
+                            synapses_weights[from][to] = oscMsg.args[2].value
+                            break;
+                        case "delay":
+                            synapses_delays[from][to] = oscMsg.args[2].value
+                            break;
+                    }
+                    // TODO: update control elements controlling this synapse
+                    break
             }
-            createNeuronControlElements()
-            createSynapseControlElements()
-            createSettingsControlElements()
-            break;
+            break
+        case "state":
+            switch (addressParts[2]) {
+                case "setting":
+                    const setting = addressParts[3]
+                    const value = oscMsg.args[0].value       
+                    settings[setting] = value
+                    if (/^dc \d+$/.test(setting)) { // dc + number
+                        neuronsAmount++
+                        synapses_weights = Array(neuronsAmount+1).fill().map(() => Array(neuronsAmount+1).fill(-1))
+                        synapses_delays = Array(neuronsAmount+1).fill().map(() => Array(neuronsAmount+1).fill(-1))
+                        createNeuronControlElements()
+                        createSynapseControlElements()
+                    } else {
+                        createNetworkControlElements()
+                    }
+                    break;
+                case "synapse":
+                    const from = oscMsg.args[0].value
+                    const to = oscMsg.args[1].value
+                    switch (addressParts[3]) {
+                        case "weight":
+                            synapses_weights[from][to] = oscMsg.args[2].value
+                            break
+                        case "delay":
+                            synapses_delays[from][to] = oscMsg.args[2].value
+                            break
+                    }
+                    // TODO: update control elements controlling this synapse
+                }
+            break
     }
 }
 
@@ -102,7 +129,7 @@ function createNeuronControlElements() {
         })
         slider.onChange = (val) => {
             updateNeuronSliders(idSelector.value, val)
-            updateParameter(slider.parameter, val)
+            updateSetting(slider.parameter, val)
         }
         neuronControlElements.push(idSelector)
         neuronControlElements.push(slider)
@@ -122,9 +149,9 @@ function createNeuronControlElements() {
     })
     pad.onChange = (valX, valY) => {
         updateNeuronSliders(IdSelectorX.value, valX)
-        updateParameter(pad.parameterX, valX)
+        updateSetting(pad.parameterX, valX)
         updateNeuronSliders(idSelectorY.value, valY)
-        updateParameter(pad.parameterY, valY)
+        updateSetting(pad.parameterY, valY)
     }
     neuronControlElements.push(pad)
     neuronControlElements.push(IdSelectorX)
@@ -146,14 +173,54 @@ function updateNeuronSliders(neuronId, value) {
     }
 }
 
-function updateParameter(parameter, value) {
-    settings[parameter] = value;
+function updateSetting(setting, value) {
+    settings[setting] = value;
     const oscMessage = {
-        address: "/update",
+        address: "/update/setting/" + setting,
         args: [
             {
-                type: "s",
-                value: parameter
+                type: "f",
+                value: value
+            }
+        ]
+    };
+    oscWebSocket.send(oscMessage);
+}
+
+function updateSynapseWeight(from, to, value) {
+    synapses_weights[from][to] = value
+    const oscMessage = {
+        address: "/update/synapse/weight",
+        args: [
+            {
+                type: "i",
+                value: from
+            },
+            {
+                type: "i",
+                value: to
+            },
+            {
+                type: "f",
+                value: value
+            }
+        ]
+    };
+    oscWebSocket.send(oscMessage);
+}
+
+function updateSynapseDelay(from, to, value) {
+    synapses_delays[from][to] = value
+    const oscMessage = {
+        address: "/update/synapse/delay",
+        args: [
+            {
+                type: "i",
+                value: from
+            },
+            {
+                type: "i",
+                value: to
             },
             {
                 type: "f",
@@ -166,76 +233,72 @@ function updateParameter(parameter, value) {
 
 function createSynapseControlElements() {
     synapseControlElements = [];
-    let weightSlider = new Slider(synapses_weights[0][1], 50, 230, 250, 20, 0, 80, null)
-    let delaySlider = new Slider(synapses_weights[0][1], 50, 310, 250, 20, 0, 80, null)
+    let weightSlider = new Slider(synapses_weights[1][2], 50, 260, 250, 20, 0, 80, null)
+    let delaySlider = new Slider(synapses_delays[1][2], 50, 340, 250, 20, 0, 80, null)
 
-    let idSelectorFrom = new IdSelector(1, 50, 150, 1, neuronsAmount, (val) => {
-        console.log(val)
+    let idSelectorFrom = new IdSelector(1, 50, 150, 1, neuronsAmount, () => {
+        weightSlider.value = synapses_weights[idSelectorFrom.value][idSelectorTo.value]
+        delaySlider.value = synapses_delays[idSelectorFrom.value][idSelectorTo.value]
     })
-    let idSelectorTo = new IdSelector(2, 220, 150, 1, neuronsAmount, (val) => {
-        console.log(val)
+    let idSelectorTo = new IdSelector(2, 220, 150, 1, neuronsAmount, () => {
+        weightSlider.value = synapses_weights[idSelectorFrom.value][idSelectorTo.value]
+        delaySlider.value = synapses_delays[idSelectorFrom.value][idSelectorTo.value]
     })
 
     weightSlider.onChange = (val) => {
-        console.log(synapses_weights)
-        synapses_weights[idSelectorFrom.value][idSelectorTo.value] = val
-        // TODO: actually update it, send it to the nn
+        updateSynapseWeight(idSelectorFrom.value, idSelectorTo.value, val)
     }
     
     delaySlider.onChange = (val) => {
-        console.log(synapses_delays)
-        synapses_delays[idSelectorFrom.value][idSelectorTo.value] = val
+        updateSynapseDelay(idSelectorFrom.value, idSelectorTo.value, val)
     }
 
     synapseControlElements.push(weightSlider)
     synapseControlElements.push(delaySlider)
     synapseControlElements.push(idSelectorFrom)
     synapseControlElements.push(idSelectorTo)
-    //synapseControlElements.push(new IdSelector(1, 50, 50, 1, neuronsAmount, (val) => {)
-    // synapseControlElements.push(new Slider("weight", 50, 110, 250, 20, 0, 1))
-    // synapseControlElements.push(new Slider("delay", 50, 170, 250, 20, 0.01, 2))
 }
 
-function createSettingsControlElements() {
+function createNetworkControlElements() {
     settingsControlElements = [];
     let slider = new Slider(settings["syn type"], 50, 140, 250, 20, 0, 1, (val) => {
-        updateParameter("syn type", val)
+        updateSetting("syn type", val)
     })
     slider.parameter = "syn type"
     settingsControlElements.push(slider)
 
     slider = new Slider(settings["dropout"], 50, 200, 250, 20, 0, 1, (val) => {
-        updateParameter("dropout", val)
+        updateSetting("dropout", val)
     })
     slider.parameter = "dropout"
     settingsControlElements.push(slider)
 
     slider = new Slider(settings["weight mean"], 50, 260, 250, 20, 0, 80, (val) => {
-        updateParameter("weight mean", val)
+        updateSetting("weight mean", val)
     })
     slider.parameter = "weight mean"
     settingsControlElements.push(slider)
 
     slider = new Slider(settings["weight size"], 50, 320, 250, 20, 0, 40, (val) => {
-        updateParameter("weight size", val)
+        updateSetting("weight size", val)
     })
     slider.parameter = "weight size"
     settingsControlElements.push(slider)
 
     slider = new Slider(settings["delay mean"], 50, 380, 250, 20, 0.01, 2, (val) => {
-        updateParameter("delay mean", val)
+        updateSetting("delay mean", val)
     })
     slider.parameter = "delay mean"
     settingsControlElements.push(slider)
 
     slider = new Slider(settings["delay size"], 50, 440, 250, 20, 0.001, 0.5, (val) => {
-        updateParameter("delay size", val)
+        updateSetting("delay size", val)
     })
     slider.parameter = "delay size"
     settingsControlElements.push(slider)
 
     slider = new Slider(settings["syn tau"], 50, 510, 250, 20, 0.5, 2, (val) => {
-        updateParameter("syn tau", val)
+        updateSetting("syn tau", val)
     })
     slider.parameter = "syn tau"
     settingsControlElements.push(slider)
@@ -260,8 +323,8 @@ function draw() {
             fill(255);
             text("from:", 50, 130)
             text("to:", 220, 130)
-            text("weight:", 50, 210)
-            text("delay:", 50, 290)
+            text("weight:", 50, 240)
+            text("delay:", 50, 320)
             for (let controlElement of synapseControlElements) {
                 controlElement.draw();
             }
@@ -352,9 +415,13 @@ function touchStarted() {
 function mouseReleased() {
     if (selectedNavbarTab == "MENU_CURRENTS") {
         for (let controlElement of neuronControlElements) {
-            controlElement.mouseReleased();
+            controlElement.mouseReleased()
         }
-    } else if (selectedNavbarTab == "MENU_NETWORK") {
+    } else if (selectedNavbarTab == "MENU_SYNAPSES") {
+        for (let controlElement of synapseControlElements) {
+            controlElement.mouseReleased()
+        }
+    } else {
         for (let controlElement of settingsControlElements) {
             controlElement.mouseReleased();
         }
@@ -362,39 +429,27 @@ function mouseReleased() {
 }
 
 function touchEnded() {
-    if (selectedNavbarTab == "MENU_CURRENTS") {
-        for (let controlElement of neuronControlElements) {
-            controlElement.touchEnded();
-        }
-    } else if (selectedNavbarTab == "MENU_NETWORK") {
-        for (let controlElement of settingsControlElements) {
-            controlElement.touchEnded();
-        }
-    }
+    mouseReleased()
 }
 
 function mouseDragged() {
     if (selectedNavbarTab == "MENU_CURRENTS") {
         for (let controlElement of neuronControlElements) {
-            controlElement.mouseDragged();
+            controlElement.mouseDragged()
         }
-    } else if (selectedNavbarTab == "MENU_NETWORK") {
+    } else if (selectedNavbarTab == "MENU_SYNAPSES") {
+        for (let controlElement of synapseControlElements) {
+            controlElement.mouseDragged()
+        }
+    } else {
         for (let controlElement of settingsControlElements) {
-            controlElement.mouseDragged();
+            controlElement.mouseDragged()
         }
     }
 }
 
 function touchMoved() {
-    if (selectedNavbarTab == "MENU_CURRENTS") {
-        for (let controlElement of neuronControlElements) {
-            controlElement.touchMoved();
-        }
-    } else if (selectedNavbarTab == "MENU_NETWORK") {
-        for (let controlElement of settingsControlElements) {
-            controlElement.touchMoved();
-        }
-    }
+    mouseDragged()
 }
 
 function windowResized() {

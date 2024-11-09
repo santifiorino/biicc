@@ -29,33 +29,37 @@ wss.on('connection', (ws) => {
     oscPort.on('message', (oscMsg) => {
         let simId;
         let controllerId;
-        switch (oscMsg.address) {
-            case '/registerSimulation':
+        const addressParts = oscMsg.address.split("/");
+        switch (addressParts[1]) {
+            case 'registerSimulation':
                 simId = oscMsg.args[0].value;
                 simulations[simId] = ws;
                 console.log(`Registered simulation ${simId}`);
                 break;
-            case '/connectController':
+            case 'connectController':
                 simId = oscMsg.args[0].value;
                 if (!simulations[simId]) return; // sim is not registered
                 controllerId = oscMsg.args[1].value;
                 controllers[controllerId] = ws;
                 connections[controllerId] = simId;
-                // get sim state to later update controller's state
                 simulations[simId].send(osc.writePacket({
                     address: "/getState",
-                    args: []
+                    args: [
+                        { type: "s", value: controllerId }
+                    ]
                 }));
                 console.log(`Connected controller ${controllerId} to simulation ${simId}`);
                 break;
-            case '/getState':
-                simId = simWs2Id(ws);
-                sendSimStateToControllers(simId, {
-                    address: "/getState",
-                    args: oscMsg.args
-                });
+            case 'state':
+                controllerId = oscMsg.args[0].value
+                controllers[controllerId].send(osc.writePacket(
+                    {
+                        address: oscMsg.address,
+                        args: oscMsg.args.slice(1)
+                    }
+                ));
                 break;
-            case '/update':
+            case 'update':
                 controllerId = controllerWs2Id(ws);
                 sendUpdateMessage(controllerId, oscMsg);
                 break;
@@ -89,14 +93,7 @@ function sendUpdateToAllControllers(fromControllerId, oscMsg) {
     const simId = connections[fromControllerId];
     for (let controllerId of getControllersConnectedToSim(simId))
         if (controllerId != fromControllerId)
-            controllers[controllerId].send(osc.writePacket(oscMsg));
-}
-
-/** Sends oscMsg to every controller connected to simId */
-function sendSimStateToControllers(simId, oscMsg) {
-    for (let controllerId of getControllersConnectedToSim(simId)){
-        controllers[controllerId].send(osc.writePacket(oscMsg));
-    }
+            controllers[controllerId].send(osc.writePacket(oscMsg))
 }
 
 function getControllersConnectedToSim(simId) {

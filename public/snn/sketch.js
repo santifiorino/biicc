@@ -38,13 +38,13 @@ settings =
   'sim steps': 2
 }
 
-circles = [];
-pulses = [];
-knobs = [];
-scopes = [];
-voices = [];
-scores = [];
-NN = null;
+circles = []
+pulses = []
+knobs = []
+scopes = []
+voices = []
+scores = []
+NN = null
 
 nodes = []
 nodeCon = []
@@ -63,76 +63,104 @@ let simulationId;
 let eventTracker;
 
 function parseOscMessage(oscMsg) {
-    const addressParts = oscMsg.address.split("/");
-    switch (addressParts[1]) {
-        case "update":
-            for (let i = 0; i < oscMsg.args.length; i+=2) {
-                const setting = oscMsg.args[i].value;
-                const value = oscMsg.args[i+1].value;
-                settings[setting] = value;
-                if (setting == "syn type") NN.set_syn_type(value);
-                if (setting == "dropout") {
-                    NN.set_dropout(value);
-                    weights_to_nodes(true);
-                }
-                if (setting == "weight mean") {
-                    NN.set_mean_weight(value);
-                    weights_to_nodes(true);
-                }
-                if (setting == "weight size") {
-                    NN.set_size_weight(value);
-                    weights_to_nodes(true);
-                }
-                if (setting == "delay mean") {
-                    NN.set_mean_delay(value);
-                    delay_to_pulses();
-                }
-                if (setting == "delay size") {
-                    NN.set_size_delay(value);
-                    delay_to_pulses();
-                }
-                if (setting == "syn tau") NN.set_syn_tau(value);
+  const addressParts = oscMsg.address.split("/")
+  switch (addressParts[1]) {
+    case "update":
+      switch (addressParts[2]) {
+        case "setting":
+          const setting = addressParts[3]
+          const value = oscMsg.args[0].value;
+          settings[setting] = value
+          if (setting == "syn type") NN.set_syn_type(value)
+          if (setting == "dropout") {
+              NN.set_dropout(value)
+              weights_to_nodes(true)
+          }
+          if (setting == "weight mean") {
+              NN.set_mean_weight(value)
+              weights_to_nodes(true)
+          }
+          if (setting == "weight size") {
+              NN.set_size_weight(value)
+              weights_to_nodes(true)
+          }
+          if (setting == "delay mean") {
+              NN.set_mean_delay(value)
+              delay_to_pulses()
+          }
+          if (setting == "delay size") {
+              NN.set_size_delay(value)
+              delay_to_pulses()
+          }
+          if (setting == "syn tau") NN.set_syn_tau(value)
+          break
+        case "synapse":
+          // TODO: update synapse weight/delay
+          console.log(oscMsg)
+          break
+      }
+      break
+    case "getState":
+      const controllerId = oscMsg.args[0].value
+      for (const setting in settings) {
+        oscWebSocket.send({
+          address: "/state/setting/" + setting,
+          args: [
+            {
+              type: "s",
+              value: controllerId
+            },
+            {
+              type: "f",
+              value: settings[setting]
+            }]
+        });
+      }
+      for (const synapse of NN.synapses) {
+        oscWebSocket.send({
+          address: "/state/synapse/weight",
+          args: [
+            {
+              type: "s",
+              value: controllerId
+            },
+            {
+              type: "i",
+              value: synapse.from.id
+            },
+            {
+              type: "i",
+              value: synapse.to.id
+            },
+            {
+              type: "f",
+              value: synapse.weight
             }
-            break;
-        case "getState":
-            args = []
-            for (const setting in settings) {
-                args.push({
-                    type: "s",
-                    value: setting
-                });
-                args.push({
-                    type: "f",
-                    value: settings[setting]
-                });
+          ]
+        });
+        oscWebSocket.send({
+          address: "/state/synapse/delay",
+          args: [
+            {
+              type: "s",
+              value: controllerId
+            },
+            {
+              type: "i",
+              value: synapse.from.id
+            },
+            {
+              type: "i",
+              value: synapse.to.id
+            },
+            {
+              type: "f",
+              value: synapse.delay
             }
-            for (const synapse of NN.synapses) {
-                args.push({
-                    type: "s",
-                    value: "synapse"
-                })
-                args.push({
-                    type: "i",
-                    value: synapse.from.id
-                })
-                args.push({
-                    type: "i",
-                    value: synapse.to.id
-                })
-                args.push({
-                    type: "f",
-                    value: synapse.weight
-                })
-                args.push({
-                    type: "f",
-                    value: synapse.delay
-                })
-            }
-            oscWebSocket.send({
-                address: "/getState",
-                args: args
-            });
-            break;
+          ]
+        });
+      }
+      break;
     }
 }
 
