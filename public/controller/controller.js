@@ -5,8 +5,9 @@ let selectedNavbarTab = "MENU_CURRENTS"
 let controllerId
 let settings = {}
 let neuronsAmount = 0
-let synapses_weights = []
-let synapses_delays = []
+let synapsesWeights = []
+let synapsesDelays = []
+let synapsesDropouts = []
 let maxDC = 150;
 
 let neuronControlElements = []
@@ -43,20 +44,25 @@ function parseOscMessage(oscMsg) {
                     const to = oscMsg.args[1].value
                     switch (addressParts[3]) {
                         case "weight":
-                            synapses_weights[from][to] = oscMsg.args[2].value
+                            synapsesWeights[from][to] = oscMsg.args[2].value
                             break;
                         case "delay":
-                            synapses_delays[from][to] = oscMsg.args[2].value
+                            synapsesDelays[from][to] = oscMsg.args[2].value
+                            break;
+                        case "dropout":
+                            synapsesDropouts[from][to] = Boolean(oscMsg.args[2].value)
                             break;
                     }
-
-                    if (synapseControlElements[2].value == from + 1 && synapseControlElements[3].value == to + 1) {
+                    if (synapseControlElements[3].value == from + 1 && synapseControlElements[4].value == to + 1) {
                         switch (addressParts[3]) {
                             case "weight":
                                 synapseControlElements[0].value = oscMsg.args[2].value
                                 break
                             case "delay":
                                 synapseControlElements[1].value = oscMsg.args[2].value
+                                break
+                            case "dropout":
+                                synapseControlElements[2].value = Boolean(oscMsg.args[2].value)
                                 break
                         }
                     }
@@ -72,33 +78,23 @@ function parseOscMessage(oscMsg) {
                     settings[setting] = value
                     if (/^dc \d+$/.test(setting)) { // dc + number
                         neuronsAmount++
-                        synapses_weights = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(-1))
-                        synapses_delays = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(-1))
-                        createNeuronControlElements()
-                        createSynapseControlElements()
-                    } else {
-                        createNetworkControlElements()
+                        synapsesWeights = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(0))
+                        synapsesDelays = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(0))
+                        synapsesDropouts = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(false))
+                        
                     }
                     break;
                 case "synapse":
                     const from = oscMsg.args[0].value
                     const to = oscMsg.args[1].value
-                    switch (addressParts[3]) {
-                        case "weight":
-                            synapses_weights[from][to] = oscMsg.args[2].value
-                            if (from == 0 && to == 1) {
-                                synapseControlElements[0].value = oscMsg.args[2].value
-                            }
-                            break
-                        case "delay":
-                            synapses_delays[from][to] = oscMsg.args[2].value
-                            if (from == 0 && to == 1) {
-                                synapseControlElements[1].value = oscMsg.args[2].value
-                            }
-                            break
-                    }
+                    synapsesWeights[from][to] = oscMsg.args[2].value
+                    synapsesDelays[from][to] = oscMsg.args[3].value
+                    synapsesDropouts[from][to] = Boolean(oscMsg.args[4].value)
                     break
             }
+            createNetworkControlElements()
+            createNeuronControlElements()
+            createSynapseControlElements()
             break
     }
 }
@@ -156,11 +152,13 @@ function createNeuronControlElements() {
     let pad = new Pad(settings["dc 1"], settings["dc 2"], 50, yPos, 200, 200, 0, maxDC, null)
     pad.parameterX = "dc 1"
     pad.parameterY = "dc 2"
-    let IdSelectorX = new IdSelector(1, 270, yPos + 30, 1, neuronsAmount, (val) => {
+    yPos += 30
+    let IdSelectorX = new IdSelector(1, 270, yPos, 1, neuronsAmount, (val) => {
         pad.valueX = settings["dc " + val]
         pad.parameterX = "dc " + val
     })
-    let idSelectorY = new IdSelector(2, 270, yPos + 100, 1, neuronsAmount, (val) => {
+    yPos += 70
+    let idSelectorY = new IdSelector(2, 270, yPos, 1, neuronsAmount, (val) => {
         pad.valueY = settings["dc " + val]
         pad.parameterY = "dc " + val
     })
@@ -173,6 +171,22 @@ function createNeuronControlElements() {
     neuronControlElements.push(pad)
     neuronControlElements.push(IdSelectorX)
     neuronControlElements.push(idSelectorY)
+
+    yPos += 140
+    let neuronSwitchSelector = new IdSelector(1, 130, yPos, 1, neuronsAmount, null)
+
+    yPos += 45
+    neuronTypeSwitch = new Switch("a", "b", 50, yPos, (val) => {
+        // TODO: change controller state of neuron type and send it to sim
+        console.log(val)
+    }, "inhibitory", "excitatory")
+
+    neuronSwitchSelector.onChange = (val) => {
+        // TODO: load neuron type to the switch
+    }
+
+    neuronControlElements.push(neuronSwitchSelector)
+    neuronControlElements.push(neuronTypeSwitch)
 
 }
 
@@ -205,7 +219,7 @@ function updateSetting(setting, value) {
 }
 
 function updateSynapseWeight(from, to, value) {
-    synapses_weights[from][to] = value
+    synapsesWeights[from][to] = value
     const oscMessage = {
         address: "/update/synapse/weight",
         args: [
@@ -227,7 +241,7 @@ function updateSynapseWeight(from, to, value) {
 }
 
 function updateSynapseDelay(from, to, value) {
-    synapses_delays[from][to] = value
+    synapsesDelays[from][to] = value
     const oscMessage = {
         address: "/update/synapse/delay",
         args: [
@@ -248,18 +262,46 @@ function updateSynapseDelay(from, to, value) {
     oscWebSocket.send(oscMessage);
 }
 
+function updateSynapseDropout(from, to, value) {
+    synapsesDropouts[from][to] = value
+    const oscMessage = {
+        address: "/update/synapse/dropout",
+        args: [
+            {
+                type: "i",
+                value: from
+            },
+            {
+                type: "i",
+                value: to
+            },
+            {
+                type: "i",
+                value: value
+            }
+        ]
+    };
+    oscWebSocket.send(oscMessage);
+}
+
 function createSynapseControlElements() {
     synapseControlElements = [];
-    let weightSlider = new Slider(synapses_weights[0][1], 50, 260, 250, 20, 0, 80, null)
-    let delaySlider = new Slider(synapses_delays[0][1], 50, 340, 250, 20, 0, 5, null)
+    let weightSlider = new Slider(synapsesWeights[0][1], 50, 290, 250, 20, 0, 80, null)
+    let delaySlider = new Slider(synapsesDelays[0][1], 50, 370, 250, 20, 0, 5, null)
+
+    let synapseDropoutSwitch = new Switch(true, false, 50, 195, null, "OFF", "ON")
+    synapseDropoutSwitch.value = synapsesDropouts[0][1]
 
     let idSelectorFrom = new IdSelector(1, 50, 150, 1, neuronsAmount, () => {
-        weightSlider.value = synapses_weights[idSelectorFrom.value - 1][idSelectorTo.value - 1]
-        delaySlider.value = synapses_delays[idSelectorFrom.value - 1][idSelectorTo.value - 1]
+        weightSlider.value = synapsesWeights[idSelectorFrom.value - 1][idSelectorTo.value - 1]
+        delaySlider.value = synapsesDelays[idSelectorFrom.value - 1][idSelectorTo.value - 1]
+        synapseDropoutSwitch.value = synapsesDropouts[idSelectorFrom.value - 1][idSelectorTo.value - 1]
     })
+
     let idSelectorTo = new IdSelector(2, 220, 150, 1, neuronsAmount, () => {
-        weightSlider.value = synapses_weights[idSelectorFrom.value - 1][idSelectorTo.value - 1]
-        delaySlider.value = synapses_delays[idSelectorFrom.value - 1][idSelectorTo.value - 1]
+        weightSlider.value = synapsesWeights[idSelectorFrom.value - 1][idSelectorTo.value - 1]
+        delaySlider.value = synapsesDelays[idSelectorFrom.value - 1][idSelectorTo.value - 1]
+        synapseDropoutSwitch.value = synapsesDropouts[idSelectorFrom.value - 1][idSelectorTo.value - 1]
     })
 
     weightSlider.onChange = (val) => {
@@ -270,8 +312,13 @@ function createSynapseControlElements() {
         updateSynapseDelay(idSelectorFrom.value - 1, idSelectorTo.value - 1, val)
     }
 
+    synapseDropoutSwitch.onChange = (val) => {
+        updateSynapseDropout(idSelectorFrom.value - 1, idSelectorTo.value - 1, val)
+    }
+
     synapseControlElements.push(weightSlider)
     synapseControlElements.push(delaySlider)
+    synapseControlElements.push(synapseDropoutSwitch)
     synapseControlElements.push(idSelectorFrom)
     synapseControlElements.push(idSelectorTo)
 }
@@ -330,26 +377,38 @@ function draw() {
     switch (selectedNavbarTab) {
         case "MENU_CURRENTS":
             rect(0, 0, windowWidth/3, 50);
+            if (networkControlElements.length > 0) {
+                textSize(20);
+                fill(255);
+                text("neuron", 50, 610)
+                text("type", 230, 610)
+            }
             for (let controlElement of neuronControlElements) {
                 controlElement.draw();
             }
             break;
         case "MENU_SYNAPSES":
             rect(windowWidth/3, 0, windowWidth/3, 50);
-            textSize(20);
-            fill(255);
-            text("from:", 50, 130)
-            text("to:", 220, 130)
-            text("weight:", 50, 240)
-            text("delay:", 50, 320)
-            for (let controlElement of synapseControlElements) {
-                controlElement.draw();
-            }
-            textSize(20);
-            fill(255);
-            for (let i = 0; i < 2; ++i) {
-                controlElement = synapseControlElements[i]
-                text(controlElement.value.toFixed(3).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, ''), synapseControlElements[i].x + synapseControlElements[i].w + 20, synapseControlElements[i].y + 16)
+            if (synapseControlElements.length > 0) {
+                textSize(20)
+                fill(255)
+                text("from:", 50, 130)
+                text("to:", 220, 130)
+                synapseControlElements[3].draw()
+                synapseControlElements[4].draw()
+                if (synapseControlElements[3].value != synapseControlElements[4].value) {
+                    for (let i = 0; i < 3; ++i) {
+                        synapseControlElements[i].draw()
+                    }
+                    textSize(20)
+                    fill(255)
+                    text("weight:", 50, 270)
+                    text("delay:", 50, 350)
+                    for (let i = 0; i < 2; ++i) {
+                        controlElement = synapseControlElements[i]
+                        text(controlElement.value.toFixed(3).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, ''), synapseControlElements[i].x + synapseControlElements[i].w + 20, synapseControlElements[i].y + 16)
+                    }
+                }
             }
             break;
         case "MENU_NETWORK":

@@ -12,42 +12,19 @@ class SliderElement {
         throw new Error("Method 'draw()' must be implemented.")
     }
 
-    handlePress() {
+    mousePressed() {
         throw new Error("Method 'handlePress()' must be implemented.")
     }
 
-    mousePressed() {
-        this.handlePress()
-    }
-
-    touchStarted() {
-        this.handlePress()
-    }
-
-    handleRelease() {
+    mouseReleased() {
         if (this.dragging)
             this.dragging = false
     }
 
-    mouseReleased() {
-        this.handleRelease()
-    }
-
-    touchEnded() {
-        this.handleRelease()
-    }
-
-    handleDrag() {
+    mouseDragged() {
         throw new Error("Method 'handleDrag()' must be implemented.")
     }
 
-    mouseDragged() {
-        this.handleDrag()
-    }
-
-    touchMoved() {
-        this.handleDrag()
-    }
 }
 
 class Slider extends SliderElement {
@@ -73,7 +50,7 @@ class Slider extends SliderElement {
         ellipse(this.x + map(this.value, this.min, this.max, 0, this.w), this.y + this.h/2, this.h + 10, this.h + 10)
     }
 
-    handlePress() {
+    mousePressed() {
         if (dist(mouseX, mouseY, this.x + map(this.value, this.min, this.max, 0, this.w), this.y + this.h/2) < (this.h + 10) / 2) {
             this.dragging = true
             this.value = constrain(map(mouseX, this.x, this.x + this.w, this.min, this.max), this.min, this.max)
@@ -81,7 +58,7 @@ class Slider extends SliderElement {
         }
     }
 
-    handleDrag() {
+    mouseDragged() {
         if (this.dragging) {
             this.value = constrain(map(mouseX, this.x, this.x + this.w, this.min, this.max), this.min, this.max)
             this.onChange(this.value)
@@ -100,8 +77,8 @@ class Pad extends SliderElement {
     }
 
     draw() {
-        strokeWeight(2)
         stroke(0)
+        strokeWeight(2)
         fill("#1D1418")
         rect(this.x, this.y, this.w, this.h)
         fill("#D92919")
@@ -120,19 +97,23 @@ class Pad extends SliderElement {
 
     }
 
-    handlePress() {
+    mousePressed() {
         if (dist(mouseX, mouseY, this.x + map(this.valueX, this.min, this.max, 0, this.w), this.y + map(this.valueY, this.min, this.max, 0, this.h)) < 15) {
             this.dragging = true
             const newValueX = constrain(map(mouseX, this.x, this.x + this.w, this.min, this.max), this.min, this.max)
             const newValueY = constrain(map(mouseY, this.y, this.y + this.h, this.min, this.max), this.min, this.max)
+            this.valueX = newValueX
+            this.valueY = newValueY
             this.onChange(newValueX, newValueY)
         }
     }
 
-    handleDrag() {
+    mouseDragged() {
         if (this.dragging) {
             const newValueX = constrain(map(mouseX, this.x, this.x + this.w, this.min, this.max), this.min, this.max)
             const newValueY = constrain(map(mouseY, this.y, this.y + this.h, this.min, this.max), this.min, this.max)
+            this.valueX = newValueX
+            this.valueY = newValueY
             this.onChange(newValueX, newValueY)
         }
     }
@@ -152,6 +133,8 @@ class IdSelector {
         textSize(20)
         // squares
         fill("#933129")
+        stroke(0)
+        strokeWeight(2)
         square(this.x, this.y, 20)
         square(this.x + 64, this.y, 20)
         // text
@@ -161,13 +144,13 @@ class IdSelector {
         text("+", this.x + 68, this.y + 16)
     }
 
-    handlePress() {
-        if (inSquareBounds(this.x, this.y)){
+    mousePressed() {
+        if (inRectBounds(this.x, this.y, 20, 20)){
             if (this.value > this.min)
                 this.value -= 1
                 this.onChange(this.value)
         }
-        if (inSquareBounds(this.x + 64, this.y)) {
+        if (inRectBounds(this.x + 64, this.y, 20, 20)) {
             if (this.value < this.max)
                 this.value += 1
                 this.onChange(this.value)
@@ -175,37 +158,57 @@ class IdSelector {
         
     }
 
-    mousePressed() {
-        this.handlePress()
-    }
+    mouseReleased() {}
 
-    touchStarted() {
-        this.handlePress()
-    }
-
-    handleRelease() {}
-
-    mouseReleased() {
-        this.handleRelease()
-    }
-
-    touchEnded() {
-        this.handleRelease()
-    }
-
-    handleDrag() {}
-
-    mouseDragged() {
-        this.handleDrag()
-    }
-
-    touchMoved() {
-        this.handleDrag()
-    }
+    mouseDragged() {}
 
 }
 
 function inSquareBounds(x, y) {
     if (!(x <= mouseX && mouseX <= x + 20)) return false
     return (y <= mouseY && mouseY <= y + 20)
+}
+
+function inRectBounds(x, y, w, h) {
+    return (x <= mouseX && mouseX <= x + w && y <= mouseY && mouseY <= y + h)
+}
+
+class Switch {
+    /** Defaults to off, sends the corresponding value to onChange funct. */
+    constructor(valueOff, valueOn, x, y, onChange, textOff=valueOff, textOn=valueOn) {
+        this.valueOff = valueOff
+        this.valueOn = valueOn
+        this.x = x
+        this.y = y
+        this.onChange = onChange
+        this.value = valueOff
+        this.textOff = textOff
+        this.textOn = textOn
+    }
+
+    draw() {
+        fill(this.value === this.valueOff ? "#933129" : "#1D1418")
+        rect(this.x, this.y, 150, 30)
+        fill(this.value === this.valueOn ? "#933129" : "#1D1418")
+        rect(this.x + 150, this.y, 150, 30)
+        fill(255)
+        textSize(20)
+        stroke(0)
+        text(this.textOff, this.x + 10, this.y + 21)
+        text(this.textOn, this.x + 160, this.y + 21)
+    }
+
+    mousePressed() {
+        if (inRectBounds(this.x, this.y, 150, 30) && this.value === this.valueOn) {
+            this.value = this.valueOff
+            this.onChange(this.value)
+        } else if (inRectBounds(this.x + 150, this.y, 150, 30) && this.value === this.valueOff) {
+            this.value = this.valueOn
+            this.onChange(this.value)
+        }
+    }
+
+    mouseReleased() {}
+
+    mouseDragged() {}
 }

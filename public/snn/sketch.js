@@ -104,6 +104,9 @@ function parseOscMessage(oscMsg) {
                 case "delay":
                   synapse.set_delay(oscMsg.args[2].value)
                   break
+                case "dropout":
+                  synapse.drop = Boolean(oscMsg.args[2].value)
+                  break
               }
             }
           }
@@ -128,7 +131,7 @@ function parseOscMessage(oscMsg) {
       }
       for (const synapse of NN.synapses) {
         oscWebSocket.send({
-          address: "/state/synapse/weight",
+          address: "/state/synapse",
           args: [
             {
               type: "s",
@@ -145,27 +148,14 @@ function parseOscMessage(oscMsg) {
             {
               type: "f",
               value: synapse.weight
-            }
-          ]
-        });
-        oscWebSocket.send({
-          address: "/state/synapse/delay",
-          args: [
-            {
-              type: "s",
-              value: controllerId
-            },
-            {
-              type: "i",
-              value: synapse.from.id
-            },
-            {
-              type: "i",
-              value: synapse.to.id
             },
             {
               type: "f",
               value: synapse.delay
+            },
+            {
+              type: "f",
+              value: synapse.drop
             }
           ]
         });
