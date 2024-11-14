@@ -111,6 +111,21 @@ function parseOscMessage(oscMsg) {
             }
           }
           break
+        case "neuron":
+          for (const neuron of NN.neurons) {
+            if (neuron.id == oscMsg.args[0].value) {
+              console.log(oscMsg.args[1].value)
+
+              neuron.syn_type = oscMsg.args[1].value
+              neuron.reset()
+            }
+          }
+          for (let i = 0; i < NN.synapses.length; i++) {
+            const synapse = NN.synapses[i]
+            if (synapse.from.id == oscMsg.args[0].value) {
+              pulses[i].set_syn_type(oscMsg.args[1].value)
+            }
+          }
       }
       break
     case "getState":
@@ -156,6 +171,25 @@ function parseOscMessage(oscMsg) {
             {
               type: "f",
               value: synapse.drop
+            }
+          ]
+        });
+      }
+      for (const neuron of NN.neurons) {
+        oscWebSocket.send({
+          address: "/state/neuron",
+          args: [
+            {
+              type: "s",
+              value: controllerId
+            },
+            {
+              type: "i",
+              value: neuron.id
+            },
+            {
+              type: "f",
+              value: neuron.syn_type
             }
           ]
         });

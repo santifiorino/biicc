@@ -5,6 +5,7 @@ let selectedNavbarTab = "MENU_CURRENTS"
 let controllerId
 let settings = {}
 let neuronsAmount = 0
+let neuronSynTypes = []
 let synapsesWeights = []
 let synapsesDelays = []
 let synapsesDropouts = []
@@ -68,6 +69,13 @@ function parseOscMessage(oscMsg) {
                     }
                     
                     break
+                case "neuron":
+                    const neuronId = oscMsg.args[0].value
+                    neuronSynTypes[neuronId] = oscMsg.args[1].value
+                    if (neuronControlElements[neuronControlElements.length-2].value == neuronId + 1) {
+                        neuronControlElements[neuronControlElements.length-1].value = oscMsg.args[1].value
+                    }
+                    break
             }
             break
         case "state":
@@ -78,6 +86,7 @@ function parseOscMessage(oscMsg) {
                     settings[setting] = value
                     if (/^dc \d+$/.test(setting)) { // dc + number
                         neuronsAmount++
+                        neuronSynTypes = Array(neuronsAmount).fill().map(() => 0)
                         synapsesWeights = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(0))
                         synapsesDelays = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(0))
                         synapsesDropouts = Array(neuronsAmount).fill().map(() => Array(neuronsAmount).fill(false))
@@ -90,6 +99,10 @@ function parseOscMessage(oscMsg) {
                     synapsesWeights[from][to] = oscMsg.args[2].value
                     synapsesDelays[from][to] = oscMsg.args[3].value
                     synapsesDropouts[from][to] = Boolean(oscMsg.args[4].value)
+                    break
+                case "neuron":
+                    const neuronId = oscMsg.args[0].value
+                    neuronSynTypes[neuronId] = oscMsg.args[1].value
                     break
             }
             createNetworkControlElements()
@@ -133,7 +146,7 @@ function setup() {
 function createNeuronControlElements() {
     neuronControlElements = []
     let yPos = 110;
-    for (let i = 0; i < min(5, neuronsAmount); i++) {
+    for (let i = 0; i < min(4, neuronsAmount); i++) {
         let slider = new Slider(settings["dc " + (i+1)], 50, yPos, 200, 20, 0, maxDC, null)
         slider.parameter = "dc " + (i+1)
         let idSelector = new IdSelector(i+1, 270, yPos, 1, neuronsAmount, (val) => {
@@ -176,13 +189,14 @@ function createNeuronControlElements() {
     let neuronSwitchSelector = new IdSelector(1, 130, yPos, 1, neuronsAmount, null)
 
     yPos += 45
-    neuronTypeSwitch = new Switch("a", "b", 50, yPos, (val) => {
-        // TODO: change controller state of neuron type and send it to sim
-        console.log(val)
+    neuronTypeSwitch = new Switch(-1, 1, 50, yPos, (val) => {
+        updateNeuronType(neuronSwitchSelector.value - 1, val)
     }, "inhibitory", "excitatory")
 
+    neuronTypeSwitch.value = neuronSynTypes[0]
+
     neuronSwitchSelector.onChange = (val) => {
-        // TODO: load neuron type to the switch
+        neuronTypeSwitch.value = neuronSynTypes[val - 1]
     }
 
     neuronControlElements.push(neuronSwitchSelector)
@@ -274,6 +288,24 @@ function updateSynapseDropout(from, to, value) {
             {
                 type: "i",
                 value: to
+            },
+            {
+                type: "i",
+                value: value
+            }
+        ]
+    };
+    oscWebSocket.send(oscMessage);
+}
+
+function updateNeuronType(neuronId, value) {
+    neuronSynTypes[neuronId] = value
+    const oscMessage = {
+        address: "/update/neuron",
+        args: [
+            {
+                type: "i",
+                value: neuronId
             },
             {
                 type: "i",
@@ -377,11 +409,11 @@ function draw() {
     switch (selectedNavbarTab) {
         case "MENU_CURRENTS":
             rect(0, 0, windowWidth/3, 50);
-            if (networkControlElements.length > 0) {
+            if (neuronControlElements.length > 0) {
                 textSize(20);
                 fill(255);
-                text("neuron", 50, 610)
-                text("type", 230, 610)
+                text("neuron", 50, neuronControlElements[neuronControlElements.length-1].y - 30)
+                text("type", 230, neuronControlElements[neuronControlElements.length-1].y - 30)
             }
             for (let controlElement of neuronControlElements) {
                 controlElement.draw();
@@ -440,6 +472,17 @@ function draw() {
 }
 
 function connectToSimulation() {
+    settings = {}
+    neuronsAmount = 0
+    // let neuronSynTypes = []
+    // let synapsesWeights = []
+    // let synapsesDelays = []
+    // let synapsesDropouts = []
+    // let maxDC = 150;
+
+    // let neuronControlElements = []
+    // let synapseControlElements = []
+    // let networkControlElements = []
     const oscMessage = {
         address: "/connectController",
         args: [
