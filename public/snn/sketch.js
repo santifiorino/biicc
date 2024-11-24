@@ -16,26 +16,29 @@ mass = 1;
 knobR = 20
 score_sep = (12 - n_neurons) * 5 + 60
 
-settings =
-{
-  'weight mean': maxWeight / 2,
-  'weight size': maxWeight / 4,
-  'delay mean': 1,
-  'delay size': .001,
-  'dt': 0.25,
-  'circle size': 50,
-  'note duration': 0.125,
-  'note volume': -12,
-  'syn type': 0.5,
-  'dropout': 0.5,
-  'net': true,
-  'scale': 'Major',
-  'dc all': 0.0,
-  'noise': 0,
-  'knobs': false,
-  'syn tau': 1,
-  'types all': 'rs',
-  'sim steps': 2
+settings = defaultSettings()
+
+function defaultSettings() {
+  return {
+    'weight mean': maxWeight / 2,
+    'weight size': maxWeight / 4,
+    'delay mean': 1,
+    'delay size': .001,
+    'dt': 0.25,
+    'circle size': 50,
+    'note duration': 0.125,
+    'note volume': -12,
+    'syn type': 0.5,
+    'dropout': 0.5,
+    'net': true,
+    'scale': 'Major',
+    'dc all': 0.0,
+    'noise': 0,
+    'knobs': false,
+    'syn tau': 1,
+    'types all': 'rs',
+    'sim steps': 2
+  }
 }
 
 circles = []
@@ -320,70 +323,15 @@ function setup() {
   NN.add_neurons(n_neurons);
   NN.add_all_synapses();
 
-
   NN.set_random_weight(settings['weight mean'], settings['weight size']);
   NN.set_random_delay(settings['delay mean'], settings['delay size']);
   NN.set_dropout(settings['dropout']);
   NN.set_type_proportion(settings['syn type']);
 
-
-
-  for (let i = 0; i < n_neurons; i++) {
-    let x = random(-width * 0.25, width * 0.25)
-    let y = random(-height * 0.25, height * 0.25)
-    node = new Node(createVector(x, y), mass)
-    nodes.push(node);
-  }
-  closeNode = nodes[0]
-
-  for (let i = 0; i < NN.neurons.length; i++) {
-    if (i < escala_mayor.length)
-      nota = escala_mayor[i]
-    else
-      nota = escala_mayor[0]
-    let voice = new Voice(nota, 1 / 16, casio);
-    NN.neurons[i].set_event_callback(function () {
-        voice.trigger();
-        eventTracker.addEvent(i)
-    });
-    voices.push(voice);
-    let circle = new Circle(nodes[i].pos, settings['circle size']);
-    circles.push(circle);
-    settings['dc ' + (i + 1)] = 0
-  }
-
-
-  for (let k = 0; k < NN.synapses.length; k++) {
-    let S = NN.synapses[k];
-    i = S.from.id;
-    j = S.to.id;
-    syn_type = NN.neurons[i].syn_type
-    let pulse = new Pulse(circles[i].position, circles[j].position, S.delay, syn_type);
-    S.set_event_callback(pulse.add_event.bind(pulse));
-    pulses.push(pulse);
-    nodeCon.push([i, j, S.weight])
-
-    // let y = NN.neurons.length - j + 1
-    // let x = -i + (NN.neurons.length - 1) * 0.5
-    let x = i
-    let y = j
-    let knob = new Knob(knobR * x * 2.2 - 200, knobR * y * 2.2 - width / 5, knobR, 0)
-    knob.set_callback(function (v) {
-      if (v < 0.01)
-        v = 0;
-      S.set_weight(v * maxWeight);
-      weights_to_nodes(false);
-    })
-    knobs.push(knob)
-  }
-
-  for (let i = 0; i < NN.neurons.length; i++) {
-    let y = -i * score_sep + (NN.neurons.length - 1) * score_sep / 2
-    scope = new Scope(-width / 2 + net_score_border, y, width - net_score_border - marginx - 300, 40);
-    scopes.push(scope);
-    score = new Score(-width / 2 + net_score_border, y, width - net_score_border - marginx - 300, 40);
-    scores.push(score);
-  }
+  createNodes()
+  createCircles()
+  createPulsesAndKnobs()
+  createScopes()
 
   var gui = new dat.GUI();
   const netFolder = gui.addFolder('Network');
@@ -568,6 +516,124 @@ function setup() {
   windowResized()
 
   frameRate(frame_rate)
+}
+
+function createNodes() {
+  nodes = []
+  for (let i = 0; i < n_neurons; i++) {
+    let x = random(-width * 0.25, width * 0.25)
+    let y = random(-height * 0.25, height * 0.25)
+    node = new Node(createVector(x, y), mass)
+    nodes.push(node);
+  }
+  closeNode = nodes[0]
+}
+
+function createCircles() {
+  circles = []
+  for (let i = 0; i < n_neurons; i++) {
+    if (i < escala_mayor.length)
+      nota = escala_mayor[i]
+    else
+      nota = escala_mayor[0]
+    let voice = new Voice(nota, 1 / 16, casio);
+    NN.neurons[i].set_event_callback(function () {
+        voice.trigger();
+        eventTracker.addEvent(i)
+    });
+    voices.push(voice);
+    let circle = new Circle(nodes[i].pos, settings['circle size']);
+    circles.push(circle);
+    settings['dc ' + (i + 1)] = 0
+  }
+}
+
+function createScopes() {
+  scopes = []
+  scores = []
+  for (let i = 0; i < NN.neurons.length; i++) {
+    let y = -i * score_sep + (NN.neurons.length - 1) * score_sep / 2
+    scope = new Scope(-width / 2 + net_score_border, y, width - net_score_border - marginx - 300, 40);
+    scopes.push(scope);
+    score = new Score(-width / 2 + net_score_border, y, width - net_score_border - marginx - 300, 40);
+    scores.push(score);
+  }
+}
+
+function createPulsesAndKnobs() {
+  pulses = []
+  nodeCon = []
+  knobs = []
+  for (let k = 0; k < NN.synapses.length; k++) {
+    let S = NN.synapses[k];
+    i = S.from.id;
+    j = S.to.id;
+    syn_type = NN.neurons[i].syn_type
+    let pulse = new Pulse(circles[i].position, circles[j].position, S.delay, syn_type);
+    S.set_event_callback(pulse.add_event.bind(pulse));
+    pulses.push(pulse);
+    nodeCon.push([i, j, S.weight])
+
+    // let y = NN.neurons.length - j + 1
+    // let x = -i + (NN.neurons.length - 1) * 0.5
+    let x = i
+    let y = j
+    let knob = new Knob(knobR * x * 2.2 - 200, knobR * y * 2.2 - width / 5, knobR, 0)
+    knob.set_callback(function (v) {
+      if (v < 0.01)
+        v = 0;
+      S.set_weight(v * maxWeight);
+      weights_to_nodes(false);
+    })
+    knobs.push(knob)
+  }
+}
+
+function saveNetwork() {
+  let network = {
+    neurons: [],
+    synapses: []
+  }
+  for (const neuron of NN.neurons) {
+    network.neurons.push({
+      id: neuron.id,
+      syn_type: neuron.syn_type
+    })
+  }
+  for (const synapse of NN.synapses) {
+    network.synapses.push({
+      from: synapse.from.id,
+      to: synapse.to.id,
+      weight: synapse.weight,
+      delay: synapse.delay,
+      drop: synapse.drop
+    })
+  }
+  return btoa(JSON.stringify(network))
+}
+
+function loadNetwork(encodedNetwork) {
+  settings = defaultSettings()
+  const network = JSON.parse(atob(encodedNetwork))
+  n_neurons = network.neurons.length
+  NN = new NeuralNetwork()
+  NN.add_neurons(network.neurons.length)
+  NN.add_all_synapses()
+  for (let i = 0; i < network.neurons.length; i++) {
+    NN.neurons[i].id = network.neurons[i].id
+    NN.neurons[i].syn_type = network.neurons[i].syn_type
+    settings["dc " + (i + 1)] = 0
+  }
+  for (let i = 0; i < network.synapses.length; i++) {
+    NN.synapses[i].set_weight(network.synapses[i].weight)
+    NN.synapses[i].set_delay(network.synapses[i].delay)
+    NN.synapses[i].drop = network.synapses[i].drop
+  }
+
+  createNodes()
+  createCircles()
+  createPulsesAndKnobs()
+  createScopes()
 }
 
 function draw() {

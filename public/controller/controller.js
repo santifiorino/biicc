@@ -93,18 +93,19 @@ function parseOscMessage(oscMsg) {
                         
                     }
                     break;
-                case "synapse":
-                    const from = oscMsg.args[0].value
-                    const to = oscMsg.args[1].value
-                    synapsesWeights[from][to] = oscMsg.args[2].value
-                    synapsesDelays[from][to] = oscMsg.args[3].value
-                    synapsesDropouts[from][to] = Boolean(oscMsg.args[4].value)
-                    break
-                case "neuron":
-                    const neuronId = oscMsg.args[0].value
-                    neuronSynTypes[neuronId] = oscMsg.args[1].value
-                    break
-            }
+                    case "synapse":
+                        const from = oscMsg.args[0].value
+                        const to = oscMsg.args[1].value
+                        synapsesWeights[from][to] = oscMsg.args[2].value
+                        synapsesDelays[from][to] = oscMsg.args[3].value
+                        synapsesDropouts[from][to] = Boolean(oscMsg.args[4].value)
+                        break
+                        case "neuron":
+                            const neuronId = oscMsg.args[0].value
+                            neuronSynTypes[neuronId] = oscMsg.args[1].value
+                            break
+                        }
+            console.log(oscMsg)
             createNetworkControlElements()
             createNeuronControlElements()
             createSynapseControlElements()
