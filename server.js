@@ -14,10 +14,8 @@ server.listen(PORT, () => {
 
 app.use(express.static('public'));
 
-let simulations = {}; // { simulationId: simulationWs }
+let simulationWs = null;
 let controllers = {}; // { controllerId: controllerWs }
-let connections = {}; // { controllerId: simulationId }
-
 const wss = new WebSocket.Server({ port: 9000 });
 
 wss.on('connection', (ws) => {
@@ -27,28 +25,26 @@ wss.on('connection', (ws) => {
     });
 
     oscPort.on('message', (oscMsg) => {
-        let simId;
         let controllerId;
         const addressParts = oscMsg.address.split("/");
         switch (addressParts[1]) {
             case 'registerSimulation':
-                simId = oscMsg.args[0].value;
-                simulations[simId] = ws;
-                console.log(`Registered simulation ${simId}`);
+                simulationWs = ws;
+                console.log(`Updated current simulation (previous ones won't receive updates)`);
                 break;
             case 'connectController':
-                simId = oscMsg.args[0].value;
-                if (!simulations[simId]) return; // sim is not registered
-                controllerId = oscMsg.args[1].value;
+                if (simulationWs == null) return; // no simulation is registered
+                controllerId = oscMsg.args[0].value;
                 controllers[controllerId] = ws;
-                connections[controllerId] = simId;
-                simulations[simId].send(osc.writePacket({
+                // ask the simulation for its state for the controller to sync
+                // TODO: since we now only have one simulation, now we might just store the state in the server
+                simulationWs.send(osc.writePacket({
                     address: "/getState",
                     args: [
                         { type: "s", value: controllerId }
                     ]
                 }));
-                console.log(`Connected controller ${controllerId} to simulation ${simId}`);
+                console.log(`Connected controller ${controllerId} to simulation`);
                 break;
             case 'state':
                 controllerId = oscMsg.args[0].value
@@ -60,58 +56,34 @@ wss.on('connection', (ws) => {
                 ));
                 break;
             case 'update':
+                // Send the update to the simulation
                 controllerId = controllerWs2Id(ws);
-                sendUpdateMessage(controllerId, oscMsg);
+                if (simulationWs == null) return; // no simulation is registered
+                simulationWs.send(osc.writePacket(oscMsg));
+                // Send the update to all other controllers
+                for (let controller of Object.keys(controllers)){
+                    if (controller == controllerId) continue;
+                    controllers[controller].send(osc.writePacket(oscMsg));
+                }
                 break;
         }
     });
 
     ws.on('close', () => {
-        const simId = simWs2Id(ws);
-        const controllerId = controllerWs2Id(ws);
-        if (controllerId) {
-            delete controllers[controllerId];
-            if (connections[controllerId]) {
-                delete connections[controllerId];
-            }
-        } else {
-            delete simulations[simId];
+        if (simulationWs == ws) {
+            simulationWs = null;
+            console.log(`Simulation disconnected`);
+            return;
         }
+        const controllerId = controllerWs2Id(ws);
+        if (controllerId) delete controllers[controllerId];
     });
 });
 
-function sendUpdateMessage(controllerId, oscMsg) {
-    const simId = connections[controllerId];
-    const simWs = simulations[simId];
-    if (!simWs) return; // it's connected to a closed sim
-    simWs.send(osc.writePacket(oscMsg));
-    sendUpdateToAllControllers(controllerId, oscMsg);
-}
-
-/** Sends oscMsg to every controller connected to the same simulation of fromControllerId */
-function sendUpdateToAllControllers(fromControllerId, oscMsg) {
-    const simId = connections[fromControllerId];
-    for (let controllerId of getControllersConnectedToSim(simId))
-        if (controllerId != fromControllerId)
-            controllers[controllerId].send(osc.writePacket(oscMsg))
-}
-
-function getControllersConnectedToSim(simId) {
-    return Object.keys(connections).filter(key => connections[key] == simId);
-}
 
 function controllerWs2Id(controllerWs) {
     for (let controller of Object.keys(controllers))
         if (controllers[controller] == controllerWs)
             return controller
-    return null;
-}
-
-function simWs2Id(simWs) {
-    for (const simId of Object.keys(simulations)) {
-        if (simulations[simId] === simWs) {
-            return simId;
-        }
-    }
     return null;
 }

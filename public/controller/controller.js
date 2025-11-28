@@ -125,6 +125,7 @@ function setup() {
 
     oscWebSocket.on("ready", function () {
         console.log("WebSocket ready");
+        connectToSimulation()
     });
 
     oscWebSocket.on("message", function (oscMsg) {
@@ -132,16 +133,6 @@ function setup() {
     });
 
     oscWebSocket.open();
-
-    textSize(32);
-    simulationInput = createInput();
-    simulationInput.position(50, 70);
-    simulationInput.size(200);
-    simulationInput.attribute("placeholder", "Simulation ID");
-
-    connectButton = createButton("Connect");
-    connectButton.position(270, 70);
-    connectButton.mousePressed(connectToSimulation);
 }
 
 function createNeuronControlElements() {
@@ -487,10 +478,6 @@ function connectToSimulation() {
     const oscMessage = {
         address: "/connectController",
         args: [
-            {
-                type: "s",
-                value: simulationInput.value().toLowerCase().trimEnd()
-            },
             {
                 type: "s",
                 value: controllerId
