@@ -62,8 +62,6 @@ drumnotes = ['A1', 'B1', 'C2', 'D2', 'E2', 'F2', 'G2', 'A2', 'B2']
 
 
 let oscWebSocket;
-let simulationId;
-let eventTracker;
 
 function parseOscMessage(oscMsg) {
   const addressParts = oscMsg.address.split("/")
@@ -201,86 +199,7 @@ function parseOscMessage(oscMsg) {
     }
 }
 
-class EventTracker {
-    constructor() {
-        this.events = [];
-        this.deltas = [];
-        this.numberOfEventsGraph = [];
-        this.deltaTimeMeanGraph = [];
-        this.deltaTimeStdGraph = [];
-    }
-
-    addEvent(neuronId) {
-        this.events.push([millis(), neuronId])
-        if (this.events.length > 1) {
-            this.deltas.push(this.events[this.events.length-1][0] - this.events[this.events.length-2][0]);
-        }
-    }
-
-    displayInformation() {
-        // TODO: make an abstraction for each metric to make it easier to add new ones and remove repeated code
-        fill(255);
-        
-        let numberOfEvents = this.events.length;
-        let deltaTimeMean = this.deltas.reduce((acc, val) => acc + val, 0) / this.deltas.length;
-        if (!deltaTimeMean) deltaTimeMean = 0;
-        let deltaTimeStd = Math.sqrt(
-            this.deltas
-                .reduce((acc, val) => acc.concat((val - deltaTimeMean) ** 2), [])
-                .reduce((acc, val) => acc + val, 0) / this.deltas.length
-        );
-        if (!deltaTimeStd) deltaTimeStd = 0;
-
-        this.numberOfEventsGraph.push(numberOfEvents);
-        this.deltaTimeMeanGraph.push(deltaTimeMean);
-        this.deltaTimeStdGraph.push(deltaTimeStd);
-        if (this.numberOfEventsGraph.length == 301) {
-            this.numberOfEventsGraph.shift();
-            this.deltaTimeMeanGraph.shift();
-            this.deltaTimeStdGraph.shift();
-        }
-        
-        text("#Events (10s): " + numberOfEvents, windowWidth - 300, 80);
-        text("Δt mean (10s): " + int(deltaTimeMean), width - 300, 270);
-        text("Δt std (10s): " + int(deltaTimeStd), width - 300, 460);
-        
-        strokeWeight(2);
-        stroke(20);
-        for (let i = 0; i < 5; i++) {
-            line(windowWidth - 300, 200 - i*20, windowWidth-20, 200 - i*20);
-            line(windowWidth - 300, 400 - i*20, windowWidth-20, 400 - i*20);
-            line(windowWidth - 300, 600 - i*20, windowWidth-20, 600 - i*20);
-        }
-
-        strokeWeight(0);
-        for (let i = 0; i < this.numberOfEventsGraph.length; i++) {
-            fill("red");
-            ellipse(windowWidth-300 + 280/300*i, 200 - map(this.numberOfEventsGraph[i], 0, n_neurons*50, 0, 80), 3, 3)
-            fill("green");
-            ellipse(windowWidth-300 + 280/300*i, 400 - map(this.deltaTimeMeanGraph[i], 0, 500, 0, 80), 3, 3)
-            fill("blue");
-            ellipse(windowWidth-300 + 280/300*i, 600 - map(this.deltaTimeStdGraph[i], 0, 500, 0, 80), 3, 3)
-        }
-        fill("red");
-        ellipse(windowWidth-300 + 280/300*(this.numberOfEventsGraph.length-1), 200 - map(this.numberOfEventsGraph[this.numberOfEventsGraph.length - 1], 0, n_neurons*50, 0, 80), 10, 10);
-        fill("green");
-        ellipse(windowWidth-300 + 280/300*(this.deltaTimeMeanGraph.length-1), 400 - map(this.deltaTimeMeanGraph[this.deltaTimeMeanGraph.length - 1], 0, 500, 0, 80), 10, 10);
-        fill("blue");
-        ellipse(windowWidth-300 + 280/300*(this.deltaTimeStdGraph.length-1), 600 - map(this.deltaTimeStdGraph[this.deltaTimeStdGraph.length - 1], 0, 500, 0, 80), 10, 10);
-    }
-
-    update() {
-        const currMillis = millis();
-        while (this.events.length > 0 && currMillis - this.events[0][0] > 10*1000) {
-            this.events.shift();
-            this.deltas.shift();
-        }
-    }
-}
-
 function setup() {
-
-  simulationId = Math.random().toString(36).substring(2, 8);
 
   oscWebSocket = new osc.WebSocketPort({
     url: "ws://<IP_ADDR>:9000",
@@ -294,12 +213,7 @@ function setup() {
   oscWebSocket.on("open", function (err) {
     oscWebSocket.send({
       address: "/registerSimulation",
-        args: [
-          {
-            type: "s",
-            value: simulationId
-          }
-        ]
+        args: []
     });
   });
   
@@ -310,9 +224,7 @@ function setup() {
 
   oscWebSocket.open();
 
-  eventTracker = new EventTracker();
-
-  net_score_border = (net_scale - 0.6) * windowWidth
+  net_score_border = (net_scale - 0.5) * windowWidth
   createCanvas(windowWidth, windowHeight);
   colorMode(HSB, 100);
   syn_colors = { '-1': color(0, 80, 100), '1': color(20, 80, 100) };
@@ -332,189 +244,7 @@ function setup() {
   createCircles()
   createPulsesAndKnobs()
   createScopes()
-
-  var gui = new dat.GUI();
-  const netFolder = gui.addFolder('Network');
-  netFolder.open()
-  netFolder.add(settings, 'syn type', 0, 1, 0.01).onChange(
-    function () {
-      NN.set_type_proportion(this.getValue());
-      for (let k = 0; k < NN.synapses.length; k++) {
-        let S = NN.synapses[k];
-        i = S.from.id;
-        j = S.to.id;
-        syn_type = NN.neurons[i].syn_type
-        pulses[k].set_syn_type(syn_type)
-      }
-    }
-  );
-  netFolder.add(settings, 'dropout', 0, 1.0, 0.01).onChange(
-    function () {
-      NN.set_dropout(this.getValue());
-      weights_to_nodes(true);
-    }
-  );
-  netFolder.add(settings, 'weight mean', 0, maxWeight, 1.0).onChange(
-    function () {
-      NN.set_mean_weight(this.getValue());
-      weights_to_nodes(true);
-    }
-  );
-  netFolder.add(settings, 'weight size', 0, maxWeight / 2, 1).onChange(
-    function () {
-      NN.set_size_weight(this.getValue());
-      weights_to_nodes(true);
-    }
-  );
-  netFolder.add(settings, 'delay mean', 0.01, 2.0, 0.001).onChange(
-    function () {
-      NN.set_mean_delay(this.getValue());
-      delay_to_pulses();
-    }
-  );
-  netFolder.add(settings, 'delay size', 0.001, 0.5, 0.001).onChange(
-    function () {
-      NN.set_size_delay(this.getValue());
-      delay_to_pulses();
-    }
-  );
-  netFolder.add(settings, 'syn tau', 0.5, 2, 0.01).onChange(
-    (val) => {
-      for (let i = 0; i < NN.neurons.length; i++) {
-        NN.neurons[i].set_syn_tau(val)
-      }
-    }
-  );
-  netFolder.add(settings, 'sim steps', 1, 4, 1).onChange(
-    (val) => {
-      for (let i = 0; i < NN.neurons.length; i++) {
-        NN.neurons[i].steps = val
-      }
-    }
-  );
-
-  // netFolder.add(settings, 'delay all', 0.02, 10.0, 0.01).onChange(
-  //   (val) => {
-  //     NN.set_all_delay(val);
-  //     for (let k = 0; k < NN.synapses.length; k++) {
-  //       let S = NN.synapses[k];
-  //       delay = S.delay
-  //       pulses[k].set_delay(delay)
-  //     }
-  //     weights_to_nodes(true);
-  //   }
-  // );
-
-  netFolder.add(settings, 'knobs').onChange(
-    (val) => {
-      NN.print()
-      for (let k = 0; k < NN.synapses.length; k++) {
-        knobs[k].on = val;
-      }
-    }
-  );
-  const typesFolder = gui.addFolder('Types');
-  typesFolder.add(settings, 'types all', { 'CH': 'ch', 'RS': 'rs' }).onChange(
-    (val) => {
-      for (let i = 0; i < NN.neurons.length; i++) {
-        NN.neurons[i].set_type(val)
-        // console.log(gui.__folders['Currents'].__controllers[i + 1])
-        // gui.__folders['Currents'].__controllers[i + 2].setValue(val)
-      }
-    }
-  )
-  const currentFolder = gui.addFolder('Currents');
-
-  currentFolder.add(settings, 'noise', 0, maxDC, 1)
-
-  currentFolder.add(settings, 'dc all', 0, maxDC, 0.1).onChange(
-    (val) => {
-      for (let i = 0; i < NN.neurons.length; i++) {
-        settings['dc ' + (i + 1)] = val;
-        // console.log(gui.__folders['Currents'].__controllers[i + 1])
-        gui.__folders['Currents'].__controllers[i + 2].setValue(val)
-      }
-    }
-  );
-  for (let i = 0; i < NN.neurons.length; i++) {
-    currentFolder.add(settings, 'dc ' + (i + 1), 0, maxDC, 0.1);
-  }
-
-  const visFolder = gui.addFolder('Vis');
-  visFolder.open()
-  const visnetFolder = visFolder.addFolder('Net');
-  visnetFolder.open()
-  visnetFolder.add(settings, 'net').onChange(
-    (val) => {
-      for (let i = 0; i < NN.neurons.length; i++) {
-        circles[i].on = val;
-      }
-      for (let k = 0; k < NN.synapses.length; k++) {
-        pulses[k].on = val;
-      }
-    }
-  );
-  visnetFolder.add(settings, 'circle size', 0, 50, 1).onChange(
-    function () {
-      for (let i = 0; i < NN.neurons.length; i++) {
-        circles[i].diameter = this.getValue();
-      }
-    }
-  );
-  const sndFolder = gui.addFolder('Sound');
-  sndFolder.open()
-  sndFolder.add(settings, 'note duration', .01, 1, 0.01).onChange(
-    function () {
-      for (let i = 0; i < voices.length; i++) {
-        voices[i].set_duration(this.getValue());
-      }
-    }
-  );
-  sndFolder.add(settings, 'note volume', -24, 0, 1).onChange(
-    (val) => { synth.volume.value = val }
-  )
-  sndFolder.add(settings, 'scale', { Drum: 'drum', Major: 'major', Minor: 'minor', Harmonics: 'harmonics', Mix: 'mix' }).onChange(
-    (val) => {
-      var notes;
-      if (val == 'drum') {
-        synths = Array(NN.neurons.length).fill(drum)
-        notes = drumnotes
-      }
-      else if (val == 'major') {
-        synths = Array(NN.neurons.length).fill(casio)
-        notes = escala_mayor
-      }
-      else if (val == 'minor') {
-        synths = Array(NN.neurons.length).fill(casio)
-        notes = escala_menor
-      }
-      else if (val == 'harmonics') {
-        synths = Array(NN.neurons.length).fill(casio)
-        notes = Array(NN.neurons.length).fill().map((v, i) => 25 * (i + 1) + "Hz");
-      }
-
-      else if (val == 'mix') {
-        synths = Array(NN.neurons.length).fill(casio)
-        notes = escala_mayor
-
-        for (let i = 0; i < 3; i++) {
-          synths[i] = drum
-          notes[i] = drumnotes[i]
-
-        }
-      }
-
-      for (let i = 0; i < voices.length; i++) {
-        if (i < notes.length) {
-          voices[i].set_note(notes[i]);
-          voices[i].set_synth(synths[i]);
-        }
-      }
-    }
-  )
-  // gui.add({ 'kick': function () { kick() } }, 'kick');
   windowResized()
-
   frameRate(frame_rate)
 }
 
@@ -539,7 +269,6 @@ function createCircles() {
     let voice = new Voice(nota, 1 / 16, casio);
     NN.neurons[i].set_event_callback(function () {
         voice.trigger();
-        eventTracker.addEvent(i)
     });
     voices.push(voice);
     let circle = new Circle(nodes[i].pos, settings['circle size']);
@@ -553,9 +282,9 @@ function createScopes() {
   scores = []
   for (let i = 0; i < NN.neurons.length; i++) {
     let y = -i * score_sep + (NN.neurons.length - 1) * score_sep / 2
-    scope = new Scope(-width / 2 + net_score_border, y, width - net_score_border - marginx - 300, 40);
+    scope = new Scope(-width / 2 + net_score_border, y, width - net_score_border - marginx, 40);
     scopes.push(scope);
-    score = new Score(-width / 2 + net_score_border, y, width - net_score_border - marginx - 300, 40);
+    score = new Score(-width / 2 + net_score_border, y, width - net_score_border - marginx, 40);
     scores.push(score);
   }
 }
@@ -687,16 +416,6 @@ function draw() {
 
   translate(-windowWidth / 2, -height / 2);
 
-  fill(0);
-  rect(windowWidth - 320, 0, 320, windowHeight);
-
-  fill(255);
-  textSize(32);
-  text("Sim ID: " + simulationId, windowWidth - 300, 30);
-
-  eventTracker.update();
-  eventTracker.displayInformation();
-  
 }
 
 function weights_to_nodes(propagate) {
