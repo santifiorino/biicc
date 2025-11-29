@@ -31,6 +31,14 @@ wss.on('connection', (ws) => {
             case 'registerSimulation':
                 simulationWs = ws;
                 console.log(`Updated current simulation (previous ones won't receive updates)`);
+                for (let controllerId of Object.keys(controllers)) {
+                    simulationWs.send(osc.writePacket({
+                        address: "/getState",
+                        args: [
+                            { type: "s", value: controllerId }
+                        ]
+                    }));
+                }
                 break;
             case 'connectController':
                 if (simulationWs == null) return; // no simulation is registered
@@ -76,7 +84,10 @@ wss.on('connection', (ws) => {
             return;
         }
         const controllerId = controllerWs2Id(ws);
-        if (controllerId) delete controllers[controllerId];
+        if (controllerId) {
+            delete controllers[controllerId];
+            console.log(`Controller ${controllerId} disconnected`);
+        }
     });
 });
 

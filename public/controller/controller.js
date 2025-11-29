@@ -7,34 +7,45 @@ let neuronsAmount = 0
 let maxDC = 150;
 
 let neuronControlElements = []
-
+let neuronExplanationTexts = []
+let neuronIds = [] // ids of the neurons that are being controlled
 
 function parseOscMessage(oscMsg) {
     const addressParts = oscMsg.address.split("/");
     switch (addressParts[1]) {
         case "update":
-            switch (addressParts[2]) {
-                case "neuron":
-                    const neuronId = oscMsg.args[0].value
-                    if (neuronControlElements[neuronControlElements.length-2].value == neuronId + 1) {
-                        neuronControlElements[neuronControlElements.length-1].value = oscMsg.args[1].value
-                    }
+            const neuronName = addressParts[2]
+            for (let i = 0; i < neuronIds.length; i++) {
+                if ("dc " + neuronIds[i] == neuronName) {
+                    neuronControlElements[i].value = oscMsg.args[0].value
                     break
+                }
             }
             break
         case "state":
-            switch (addressParts[2]) {
-                case "setting":
-                    const setting = addressParts[3]
-                    const value = oscMsg.args[0].value       
-                    settings[setting] = value
-                    if (/^dc \d+$/.test(setting)) { // dc + number
-                        neuronsAmount++
-                    }
-                    break;
-                }
+            console.log(oscMsg)
+            for (let i = 0; i < oscMsg.args.length; i++) {
+                settings["dc " + (i + 1)] = oscMsg.args[i].value
+            }
+            neuronsAmount = oscMsg.args.length
             createNeuronControlElements()
             break
+    }
+}
+
+class Text {
+    constructor(text, x, y, textSize) {
+        this.text = text
+        this.x = x
+        this.y = y
+        this.color = color(255)
+        this.textSize = 16
+    }
+
+    draw() {
+        fill(this.color)
+        textSize(this.textSize)
+        text(this.text, this.x, this.y)
     }
 }
 
@@ -61,22 +72,33 @@ function setup() {
 }
 
 function createNeuronControlElements() {
+    const slidersAmount = min(3, neuronsAmount);
+    neuronIds = [];
+    let usedIds = new Set();
+    while (neuronIds.length < slidersAmount) {
+        const id = Math.floor(Math.random() * neuronsAmount) + 1;
+        if (!usedIds.has(id)) {
+            usedIds.add(id);
+            neuronIds.push(id);
+        }
+    }
     neuronControlElements = []
+    neuronExplanationTexts = []
     let yPos = 110;
-    for (let i = 0; i < min(4, neuronsAmount); i++) {
-        let slider = new Slider(settings["dc " + (i+1)], 50, yPos, 200, 20, 0, maxDC, null)
-        slider.parameter = "dc " + (i+1)
-        let idSelector = new IdSelector(i+1, 270, yPos, 1, neuronsAmount, (val) => {
-            slider.parameter = "dc " + val
-            slider.value = settings["dc " + val]
-        })
+    for (let i = 0; i < neuronIds.length; i++) {
+        let slider = new Slider(settings["dc " + neuronIds[i]], 50, yPos, windowWidth - 100, 30, 0, maxDC, null)
+        slider.parameter = "dc " + neuronIds[i]
         slider.onChange = (val) => {
-            updateNeuronSliders(idSelector.value, val)
             updateSetting(slider.parameter, val)
         }
-        neuronControlElements.push(idSelector)
         neuronControlElements.push(slider)
-        yPos += 45;
+        yPos += 40;
+        for (let explanation of slidersExplanations[slider.parameter]) {
+            sliderExplanation = new Text(explanation, 50, yPos + 20, 24)
+            neuronExplanationTexts.push(sliderExplanation)
+            yPos += 20;
+        }
+        yPos += 50;
     }
     yPos += 20;
     let pad = new Pad(settings["dc 1"], settings["dc 2"], 50, yPos, 200, 200, 0, maxDC, null)
@@ -98,9 +120,9 @@ function createNeuronControlElements() {
         updateNeuronSliders(idSelectorY.value, valY)
         updateSetting(pad.parameterY, valY)
     }
-    neuronControlElements.push(pad)
-    neuronControlElements.push(IdSelectorX)
-    neuronControlElements.push(idSelectorY)
+    // neuronControlElements.push(pad)
+    // neuronControlElements.push(IdSelectorX)
+    // neuronControlElements.push(idSelectorY)
 }
 
 function updateNeuronSliders(neuronId, value) {
@@ -120,27 +142,10 @@ function updateNeuronSliders(neuronId, value) {
 function updateSetting(setting, value) {
     settings[setting] = value;
     const oscMessage = {
-        address: "/update/setting/" + setting,
+        address: "/update/" + setting,
         args: [
             {
                 type: "f",
-                value: value
-            }
-        ]
-    };
-    oscWebSocket.send(oscMessage);
-}
-
-function updateNeuronType(neuronId, value) {
-    const oscMessage = {
-        address: "/update/neuron",
-        args: [
-            {
-                type: "i",
-                value: neuronId
-            },
-            {
-                type: "i",
                 value: value
             }
         ]
@@ -153,6 +158,9 @@ function draw() {
     fill(0);
     for (let controlElement of neuronControlElements) {
         controlElement.draw();
+    }
+    for (let text of neuronExplanationTexts) {
+        text.draw();
     }
 }
 

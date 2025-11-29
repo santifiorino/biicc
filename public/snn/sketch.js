@@ -1,6 +1,4 @@
 var syn_colors;
-var color_base;
-var color_bright;
 var net_score_border;
 var frame_rate = 60;
 
@@ -67,136 +65,33 @@ function parseOscMessage(oscMsg) {
   const addressParts = oscMsg.address.split("/")
   switch (addressParts[1]) {
     case "update":
-      switch (addressParts[2]) {
-        case "setting":
-          const setting = addressParts[3]
-          const value = oscMsg.args[0].value;
-          settings[setting] = value
-          if (setting == "syn type") NN.set_syn_type(value)
-          if (setting == "dropout") {
-              NN.set_dropout(value)
-              weights_to_nodes(true)
-          }
-          if (setting == "weight mean") {
-              NN.set_mean_weight(value)
-              weights_to_nodes(true)
-          }
-          if (setting == "weight size") {
-              NN.set_size_weight(value)
-              weights_to_nodes(true)
-          }
-          if (setting == "delay mean") {
-              NN.set_mean_delay(value)
-              delay_to_pulses()
-          }
-          if (setting == "delay size") {
-              NN.set_size_delay(value)
-              delay_to_pulses()
-          }
-          if (setting == "syn tau") NN.set_syn_tau(value)
-          break
-        case "synapse":
-          for (const synapse of NN.synapses) {
-            if (synapse.from.id == oscMsg.args[0].value && synapse.to.id == oscMsg.args[1].value) {
-              switch (addressParts[3]) {
-                case "weight":
-                  synapse.set_weight(oscMsg.args[2].value)
-                  break
-                case "delay":
-                  synapse.set_delay(oscMsg.args[2].value)
-                  break
-                case "dropout":
-                  synapse.drop = Boolean(oscMsg.args[2].value)
-                  break
-              }
-            }
-          }
-          break
-        case "neuron":
-          for (const neuron of NN.neurons) {
-            if (neuron.id == oscMsg.args[0].value) {
-              console.log(oscMsg.args[1].value)
-
-              neuron.syn_type = oscMsg.args[1].value
-              neuron.reset()
-            }
-          }
-          for (let i = 0; i < NN.synapses.length; i++) {
-            const synapse = NN.synapses[i]
-            if (synapse.from.id == oscMsg.args[0].value) {
-              pulses[i].set_syn_type(oscMsg.args[1].value)
-            }
-          }
-      }
+      const setting = addressParts[2];
+      const value = oscMsg.args[0].value;
+      settings[setting] = value;
       break
     case "getState":
       const controllerId = oscMsg.args[0].value
+      let values = []
       for (const setting in settings) {
-        oscWebSocket.send({
-          address: "/state/setting/" + setting,
-          args: [
-            {
-              type: "s",
-              value: controllerId
-            },
-            {
-              type: "f",
-              value: settings[setting]
-            }]
-        });
+        if (/^dc \d+$/.test(setting)) {
+          values.push({
+            type: "f",
+            value: settings[setting]
+          })
+        }
       }
-      for (const synapse of NN.synapses) {
-        oscWebSocket.send({
-          address: "/state/synapse",
-          args: [
-            {
-              type: "s",
-              value: controllerId
-            },
-            {
-              type: "i",
-              value: synapse.from.id
-            },
-            {
-              type: "i",
-              value: synapse.to.id
-            },
-            {
-              type: "f",
-              value: synapse.weight
-            },
-            {
-              type: "f",
-              value: synapse.delay
-            },
-            {
-              type: "f",
-              value: synapse.drop
-            }
-          ]
-        });
-      }
-      for (const neuron of NN.neurons) {
-        oscWebSocket.send({
-          address: "/state/neuron",
-          args: [
-            {
-              type: "s",
-              value: controllerId
-            },
-            {
-              type: "i",
-              value: neuron.id
-            },
-            {
-              type: "f",
-              value: neuron.syn_type
-            }
-          ]
-        });
-      }
+      oscWebSocket.send({
+        address: "/state/neurons",
+        args: [
+          {
+            type: "s",
+            value: controllerId
+          },
+          ...values
+        ]
+      });
       break;
-    }
+  }
 }
 
 function setup() {
@@ -226,10 +121,10 @@ function setup() {
 
   net_score_border = (net_scale - 0.5) * windowWidth
   createCanvas(windowWidth, windowHeight);
-  colorMode(HSB, 100);
-  syn_colors = { '-1': color(0, 80, 100), '1': color(20, 80, 100) };
-  color_base = color(0, 0, 70)
-  color_bright = color(0, 0, 100)
+  syn_colors = {
+    '-1': color(synapseExcitatoryColor[0], synapseExcitatoryColor[1], synapseExcitatoryColor[2]),
+    '1': color(synapseInhibitoryColor[0], synapseInhibitoryColor[1], synapseInhibitoryColor[2])
+  };
 
   NN = new NeuralNetwork();
   NN.add_neurons(n_neurons);
@@ -366,7 +261,7 @@ function loadNetwork(encodedNetwork) {
 }
 
 function draw() {
-  background(20);
+  background(backgroundColor[0], backgroundColor[1], backgroundColor[2]);
 
   translate(width / 2, height / 2)
 

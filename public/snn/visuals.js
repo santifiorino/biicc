@@ -8,8 +8,6 @@ class Circle {
   constructor(position, diameter) {
     this.position = position;
     this.diameter = diameter;
-    this.color = color_base;
-    this.color_bright = color_bright;
     this.on = true;
   }
   set_color(color) {
@@ -25,11 +23,11 @@ class Circle {
       push();
       translate(net_offset_x, net_offset_y)
       scale(net_scale)
-      fill(this.color);
-      stroke(this.color);
+      fill(...neuronDefaultColor);
+      stroke(...neuronDefaultColor);
       circle(this.position.x, this.position.y, this.diameter)
-      fill(this.color_bright);
-      stroke(this.color_bright);
+      fill(...neuronPulseColor);
+      stroke(...neuronPulseColor);
       circle(this.position.x, this.position.y, map(size, -0.1, 1, 0, this.diameter, true))
       pop();
 
@@ -123,16 +121,12 @@ class Pulse {
     this.pulses = [];
     this.size = 5;
     this.line = true;
-    this.color = color_base;
     this.on = true;
     this.syn_type = syn_type;
     this.syn_color = syn_colors[syn_type.toString()]
   }
   add_event() {
     this.pulses.push(0);
-  }
-  set_color(color) {
-    this.color = color;
   }
   set_delay(delay) {
     this.delay = delay;
@@ -167,7 +161,7 @@ class Pulse {
       scale(net_scale)
       if (this.line) {
         noFill();
-        stroke(this.color);
+        stroke(...synapseColor);
         strokeWeight(size);
 
         let paux = this.p2.copy().sub(this.p1);
@@ -197,7 +191,6 @@ class Score {
     this.bottom = bottom;
     this.width = width;
     this.height = height;
-    this.color = color_bright;
     this.pt = 0;
 
   }
@@ -222,8 +215,8 @@ class Score {
       }
     }
 
-    fill(this.color);
-    stroke(this.color);
+    fill(...scopePulseColor);
+    stroke(...scopePulseColor);
 
     for (let i = 1; i < this.buffer_size; i++) {
       if (this.buffer[i] > 0) {
@@ -245,11 +238,6 @@ class Scope {
     this.width = width;
     this.height = height;
     this.pt = 0;
-    this.color = color_bright;
-  }
-
-  set_color(color) {
-    this.color = color;
   }
 
   draw(y) {
@@ -257,7 +245,7 @@ class Scope {
     this.pt = (this.pt + 1) % this.buffer_size;
 
     noFill();
-    stroke(this.color);
+    stroke(...scopeLineColor);
 
     this.x_prev = this.left;
     this.y_prev = this.bottom - this.buffer[0] * this.height;
