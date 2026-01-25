@@ -9,6 +9,7 @@ let maxDC = 150;
 let neuronControlElements = [];
 let neuronExplanationTexts = [];
 let neuronIds = []; // ids of the neurons that are being controlled
+let initialized = false;
 
 function parseOscMessage(oscMsg) {
   const addressParts = oscMsg.address.split("/");
@@ -49,26 +50,94 @@ class Text {
   }
 }
 
+function getPersistentControllerId() {
+  try {
+    const key = "controllerId";
+    let id = localStorage.getItem(key);
+    if (!id) {
+      id = Math.random().toString(36).substring(2, 8);
+      localStorage.setItem(key, id);
+    }
+    return id;
+  } catch (e) {
+    // Fallback if localStorage unavailable
+    return Math.random().toString(36).substring(2, 8);
+  }
+}
+
 function setup() {
-  createCanvas(windowWidth, windowHeight);
+  // Check capacity before initializing UI and WebSocket
+  controllerId = getPersistentControllerId();
+  fetch(`/api/controller/check?controllerId=${encodeURIComponent(controllerId)}`)
+    .then((r) => r.json())
+    .then((data) => {
+      if (!data.allowed) {
+        const msg = document.createElement("div");
+        msg.textContent = "Maximum number of controllers reached. Please try again later.";
+        msg.style.color = "#fff";
+        msg.style.fontFamily = "sans-serif";
+        msg.style.fontSize = "20px";
+        msg.style.textAlign = "center";
+        msg.style.marginTop = "20vh";
+        document.body.style.background = "#2C2428";
+        document.body.appendChild(msg);
+        noLoop(); // prevent draw from running
+        return;
+      }
 
-  controllerId = Math.random().toString(36).substring(2, 8);
+      createCanvas(windowWidth, windowHeight);
 
-  oscWebSocket = new osc.WebSocketPort({
-    url: "ws://<IP_ADDR>:9000",
-    metadata: true,
-  });
+      fetch("/api/config")
+        .then((r) => r.json())
+        .then((cfg) => {
+          const wsUrl =
+            (cfg && typeof cfg.wsUrl === "string" && cfg.wsUrl) ||
+            `ws://${location.hostname}:9000`;
 
-  oscWebSocket.on("ready", function () {
-    console.log("WebSocket ready");
-    connectToSimulation();
-  });
+          oscWebSocket = new osc.WebSocketPort({
+            url: wsUrl,
+            metadata: true,
+          });
 
-  oscWebSocket.on("message", function (oscMsg) {
-    parseOscMessage(oscMsg);
-  });
+          oscWebSocket.on("ready", function () {
+            console.log("WebSocket ready");
+            connectToSimulation();
+          });
 
-  oscWebSocket.open();
+          oscWebSocket.on("message", function (oscMsg) {
+            parseOscMessage(oscMsg);
+          });
+
+          oscWebSocket.open();
+          initialized = true;
+        })
+        .catch((err) => {
+          const msg = document.createElement("div");
+          msg.textContent = "Error loading configuration. Please try again.";
+          msg.style.color = "#fff";
+          msg.style.fontFamily = "sans-serif";
+          msg.style.fontSize = "20px";
+          msg.style.textAlign = "center";
+          msg.style.marginTop = "20vh";
+          document.body.style.background = "#2C2428";
+          document.body.appendChild(msg);
+          noLoop();
+          console.error(err);
+        });
+    })
+    .catch((err) => {
+      const msg = document.createElement("div");
+      msg.textContent = "Error checking capacity. Please try again.";
+      msg.style.color = "#fff";
+      msg.style.fontFamily = "sans-serif";
+      msg.style.fontSize = "20px";
+      msg.style.textAlign = "center";
+      msg.style.marginTop = "20vh";
+      document.body.style.background = "#2C2428";
+      document.body.appendChild(msg);
+      noLoop();
+      console.error(err);
+    });
 }
 
 function createNeuronControlElements() {
@@ -173,6 +242,7 @@ function updateSetting(setting, value) {
 }
 
 function draw() {
+  if (!initialized) return;
   background("#2C2428");
   fill(0);
   for (let controlElement of neuronControlElements) {
@@ -229,6 +299,7 @@ function touchMoved() {
 }
 
 function windowResized() {
+  if (!initialized) return;
   resizeCanvas(windowWidth, windowHeight);
   if (neuronControlElements.length > 0) {
     createNeuronControlElements();

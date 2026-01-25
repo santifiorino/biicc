@@ -120,28 +120,39 @@ function parseOscMessage(oscMsg) {
 }
 
 function setup() {
-  oscWebSocket = new osc.WebSocketPort({
-    url: "ws://<IP_ADDR>:9000",
-    metadata: true,
-  });
+  fetch("/api/config")
+    .then((r) => r.json())
+    .then((cfg) => {
+      const wsUrl =
+        (cfg && typeof cfg.wsUrl === "string" && cfg.wsUrl) ||
+        `ws://${location.hostname}:9000`;
 
-  oscWebSocket.on("ready", function () {
-    console.log("WebSocket ready");
-  });
+      oscWebSocket = new osc.WebSocketPort({
+        url: wsUrl,
+        metadata: true,
+      });
 
-  oscWebSocket.on("open", function (err) {
-    oscWebSocket.send({
-      address: "/registerSimulation",
-      args: [],
+      oscWebSocket.on("ready", function () {
+        console.log("WebSocket ready");
+      });
+
+      oscWebSocket.on("open", function (err) {
+        oscWebSocket.send({
+          address: "/registerSimulation",
+          args: [],
+        });
+      });
+
+      oscWebSocket.on("message", function (oscMsg) {
+        //console.log(oscMsg);
+        parseOscMessage(oscMsg);
+      });
+
+      oscWebSocket.open();
+    })
+    .catch((err) => {
+      console.error("Error loading configuration", err);
     });
-  });
-
-  oscWebSocket.on("message", function (oscMsg) {
-    //console.log(oscMsg);
-    parseOscMessage(oscMsg);
-  });
-
-  oscWebSocket.open();
 
   net_score_border = (net_scale - 0.5) * windowWidth;
   createCanvas(windowWidth, windowHeight);
