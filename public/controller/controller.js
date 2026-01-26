@@ -10,16 +10,25 @@ let neuronControlElements = [];
 let neuronExplanationTexts = [];
 let neuronIds = []; // ids of the neurons that are being controlled
 let initialized = false;
+let assignedNeuronId = null; // 1-based neuron id assigned by backend
+let hasState = false;
 
 function parseOscMessage(oscMsg) {
   const addressParts = oscMsg.address.split("/");
   switch (addressParts[1]) {
     case "update":
-      const neuronName = addressParts[2];
-      for (let i = 0; i < neuronIds.length; i++) {
-        if ("dc " + neuronIds[i] == neuronName) {
-          neuronControlElements[i].value = oscMsg.args[0].value;
-          break;
+      if (addressParts[2] === "dc") {
+        const id = oscMsg.args?.[0]?.value;
+        const value = oscMsg.args?.[1]?.value;
+        if (typeof id === "number" && typeof value === "number") {
+          for (let i = 0; i < neuronIds.length; i++) {
+            if (neuronIds[i] === id) {
+              neuronControlElements[i].value = value;
+              break;
+            }
+          }
+          // Keep settings in sync
+          settings["dc " + id] = value;
         }
       }
       break;
@@ -29,7 +38,17 @@ function parseOscMessage(oscMsg) {
         settings["dc " + (i + 1)] = oscMsg.args[i].value;
       }
       neuronsAmount = oscMsg.args.length;
-      createNeuronControlElements();
+      hasState = true;
+      maybeCreateUI();
+      break;
+    case "assignment":
+      if (addressParts[2] === "neuron") {
+        const value = oscMsg.args?.[0]?.value;
+        if (typeof value === "number" && value >= 1) {
+          assignedNeuronId = value;
+          maybeCreateUI();
+        }
+      }
       break;
   }
 }
@@ -40,13 +59,24 @@ class Text {
     this.x = x;
     this.y = y;
     this.color = color(255);
-    this.textSize = 16;
+    this.textSize = textSize || 16;
+    this.align = "left"; // "left" | "center" | "right"
   }
 
   draw() {
+    push();
+    noStroke();
     fill(this.color);
     textSize(this.textSize);
+    if (this.align === "center") {
+      textAlign(CENTER, BASELINE);
+    } else if (this.align === "right") {
+      textAlign(RIGHT, BASELINE);
+    } else {
+      textAlign(LEFT, BASELINE);
+    }
     text(this.text, this.x, this.y);
+    pop();
   }
 }
 
@@ -68,18 +98,21 @@ function getPersistentControllerId() {
 function setup() {
   // Check capacity before initializing UI and WebSocket
   controllerId = getPersistentControllerId();
-  fetch(`/api/controller/check?controllerId=${encodeURIComponent(controllerId)}`)
+  fetch(
+    `/api/controller/check?controllerId=${encodeURIComponent(controllerId)}`,
+  )
     .then((r) => r.json())
     .then((data) => {
       if (!data.allowed) {
         const msg = document.createElement("div");
-        msg.textContent = "Maximum number of controllers reached. Please try again later.";
+        msg.textContent =
+          "Maximum number of controllers reached. Please try again later.";
         msg.style.color = "#fff";
         msg.style.fontFamily = "sans-serif";
         msg.style.fontSize = "20px";
         msg.style.textAlign = "center";
         msg.style.marginTop = "20vh";
-        document.body.style.background = "#2C2428";
+        document.body.style.background = "#010101";
         document.body.appendChild(msg);
         noLoop(); // prevent draw from running
         return;
@@ -119,7 +152,7 @@ function setup() {
           msg.style.fontSize = "20px";
           msg.style.textAlign = "center";
           msg.style.marginTop = "20vh";
-          document.body.style.background = "#2C2428";
+          document.body.style.background = "#010101";
           document.body.appendChild(msg);
           noLoop();
           console.error(err);
@@ -141,26 +174,39 @@ function setup() {
 }
 
 function createNeuronControlElements() {
-  const slidersAmount = min(3, neuronsAmount);
-  neuronIds = [];
-  let usedIds = new Set();
-  while (neuronIds.length < slidersAmount) {
-    const id = Math.floor(Math.random() * neuronsAmount) + 1;
-    if (!usedIds.has(id)) {
-      usedIds.add(id);
-      neuronIds.push(id);
-    }
-  }
+  const chosenId =
+    typeof assignedNeuronId === "number" && assignedNeuronId >= 1
+      ? assignedNeuronId
+      : 1;
+  neuronIds = [chosenId];
   neuronControlElements = [];
   neuronExplanationTexts = [];
-  let yPos = 110;
+  // Big neuron label above the slider
+  const bigLabel = new Text(`${chosenId}`, windowWidth / 2, 110, 64);
+  bigLabel.textSize = 64;
+  bigLabel.align = "center";
+  neuronExplanationTexts.push(bigLabel);
+  // Centered vertical slider
+  const thickness = 60;
+  const yTop = 160; // below the big number
+  const buttonRadius = 40; // keep in sync with button below
+  const spacing = 40; // space between slider and button
+  const bottomPadding = 40;
+  // Make sure all three elements (number, slider, button) fit on screen
+  const availableForSlider = max(
+    120,
+    windowHeight - yTop - spacing - buttonRadius * 2 - bottomPadding,
+  );
+  const sliderHeight = availableForSlider;
+  const xCenter = (windowWidth - thickness) / 2;
+  let yPos = yTop;
   for (let i = 0; i < neuronIds.length; i++) {
-    let slider = new Slider(
+    let slider = new VerticalSlider(
       settings["dc " + neuronIds[i]],
-      50,
+      xCenter,
       yPos,
-      windowWidth - 100,
-      30,
+      thickness,
+      sliderHeight,
       0,
       maxDC,
       null,
@@ -170,15 +216,27 @@ function createNeuronControlElements() {
       updateSetting(slider.parameter, val);
     };
     neuronControlElements.push(slider);
-    yPos += 40;
-    for (let explanation of slidersExplanations[slider.parameter]) {
-      sliderExplanation = new Text(explanation, 50, yPos + 20, 24);
-      neuronExplanationTexts.push(sliderExplanation);
-      yPos += 20;
-    }
-    yPos += 50;
   }
-  yPos += 20;
+  // Add a circular button under the slider to send pulse
+  // Place center so the button's top is exactly `spacing` below the slider
+  const buttonY = yTop + sliderHeight + spacing + buttonRadius;
+  const buttonX = windowWidth / 2;
+  const pulseButton = new CircleButton(buttonX, buttonY, buttonRadius, () => {
+    if (assignedNeuronId) {
+      const oscMessage = {
+        address: "/pulse",
+        args: [
+          {
+            type: "i",
+            value: assignedNeuronId,
+          },
+        ],
+      };
+      oscWebSocket.send(oscMessage);
+    }
+  });
+  neuronControlElements.push(pulseButton);
+  yPos = buttonY + buttonRadius + 20;
   let pad = new Pad(
     settings["dc 1"],
     settings["dc 2"],
@@ -213,6 +271,14 @@ function createNeuronControlElements() {
   // neuronControlElements.push(idSelectorY)
 }
 
+function maybeCreateUI() {
+  if (!initialized) return;
+  if (!hasState) return;
+  if (neuronControlElements.length === 0) {
+    createNeuronControlElements();
+  }
+}
+
 function updateNeuronSliders(neuronId, value) {
   for (let i = 0; i < neuronControlElements.length - 3; i += 2) {
     if (neuronControlElements[i].value == neuronId) {
@@ -229,21 +295,28 @@ function updateNeuronSliders(neuronId, value) {
 
 function updateSetting(setting, value) {
   settings[setting] = value;
-  const oscMessage = {
-    address: "/update/" + setting,
-    args: [
-      {
-        type: "f",
-        value: value,
-      },
-    ],
-  };
+  let oscMessage;
+  if (/^dc \d+$/.test(setting)) {
+    const id = parseInt(setting.split(" ")[1], 10);
+    oscMessage = {
+      address: "/update/dc",
+      args: [
+        { type: "i", value: id },
+        { type: "f", value: value },
+      ],
+    };
+  } else {
+    oscMessage = {
+      address: "/update/" + setting.replace(/\s+/g, "_"),
+      args: [{ type: "f", value: value }],
+    };
+  }
   oscWebSocket.send(oscMessage);
 }
 
 function draw() {
   if (!initialized) return;
-  background("#2C2428");
+  background("#010101");
   fill(0);
   for (let controlElement of neuronControlElements) {
     controlElement.draw();

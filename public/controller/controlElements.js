@@ -90,6 +90,77 @@ class Slider extends SliderElement {
   }
 }
 
+// Vertical variant of the slider (bottom = min, top = max)
+class VerticalSlider extends SliderElement {
+  constructor(value, x, y, w, h, min, max, onChange) {
+    super(x, y, w, h);
+    this.value = value;
+    this.min = min;
+    this.max = max;
+    this.onChange = onChange;
+  }
+
+  draw() {
+    push();
+    // Outer pill-shaped track (white outline, no fill)
+    stroke(255);
+    strokeWeight(3);
+    noFill();
+    const radius = this.w / 2;
+    rect(this.x, this.y, this.w, this.h, radius);
+
+    // Inner movement bounds to keep the knob fully inside with margin
+    const centerX = this.x + this.w / 2;
+    const knobSize = Math.max(14, Math.floor(this.w * 0.6));
+    const margin = Math.ceil(knobSize / 2) + 12;
+    const innerTop = this.y + margin;
+    const innerBottom = this.y + this.h - margin;
+    const innerSpan = Math.max(0, innerBottom - innerTop);
+
+    // Value bar (thin white pill from bottom up within the inner bounds)
+    const t = map(this.value, this.min, this.max, 0, 1);
+    const handleY = innerBottom - t * innerSpan;
+    const barW = Math.max(6, Math.floor(this.w * 0.18));
+    const barX = centerX - barW / 2;
+    noStroke();
+    fill(255);
+    rect(barX, handleY, barW, innerBottom - handleY, barW / 2);
+
+    // Circular knob (always inside track, with margin)
+    ellipse(centerX, handleY, knobSize, knobSize);
+    pop();
+  }
+
+  mousePressed() {
+    const centerX = this.x + this.w / 2;
+    const knobSize = Math.max(14, Math.floor(this.w * 0.6));
+    const margin = Math.ceil(knobSize / 2) + 4;
+    const innerTop = this.y + margin;
+    const innerBottom = this.y + this.h - margin;
+    const innerSpan = Math.max(0, innerBottom - innerTop);
+    const t = map(this.value, this.min, this.max, 0, 1);
+    const handleY = innerBottom - t * innerSpan;
+    if (dist(mouseX, mouseY, centerX, handleY) < knobSize / 2) {
+      this.dragging = true;
+      const clampedY = constrain(mouseY, innerTop, innerBottom);
+      this.value = map(clampedY, innerBottom, innerTop, this.min, this.max);
+      this.onChange(this.value);
+    }
+  }
+
+  mouseDragged() {
+    if (this.dragging) {
+      const knobSize = Math.max(14, Math.floor(this.w * 0.6));
+      const margin = Math.ceil(knobSize / 2) + 4;
+      const innerTop = this.y + margin;
+      const innerBottom = this.y + this.h - margin;
+      const clampedY = constrain(mouseY, innerTop, innerBottom);
+      this.value = map(clampedY, innerBottom, innerTop, this.min, this.max);
+      this.onChange(this.value);
+    }
+  }
+}
+
 class Pad extends SliderElement {
   constructor(valueX, valueY, x, y, w, h, min, max, onChange) {
     super(x, y, w, h);
@@ -281,6 +352,61 @@ class Switch {
   }
 
   mouseReleased() {}
+
+  mouseDragged() {}
+}
+
+// Simple centered circular button
+class CircleButton {
+  constructor(x, y, radius, onClick) {
+    this.x = x;
+    this.y = y;
+    this.radius = radius;
+    this.onClick = onClick;
+    this.pressed = false;
+    this.activeUntilMs = 0; // visual feedback timeout
+    this.feedbackMs = 200;
+  }
+
+  draw() {
+    push();
+    const now =
+      typeof millis === "function"
+        ? millis()
+        : Date.now(); /* fallback, unit mismatch is fine for visuals */
+    const isActive = now < this.activeUntilMs;
+    if (isActive) {
+      stroke(255);
+      strokeWeight(3);
+      fill(0);
+    } else {
+      noStroke();
+      fill(255);
+    }
+    const remaining = Math.max(0, this.activeUntilMs - now);
+    const scale =
+      isActive && this.feedbackMs > 0
+        ? 1 + 0.12 * (remaining / this.feedbackMs)
+        : 1;
+    ellipse(this.x, this.y, this.radius * 2 * scale, this.radius * 2 * scale);
+    pop();
+  }
+
+  mousePressed() {
+    if (dist(mouseX, mouseY, this.x, this.y) <= this.radius) {
+      this.pressed = true;
+      const now =
+        typeof millis === "function" ? millis() : Date.now();
+      this.activeUntilMs = now + this.feedbackMs; // short feedback
+      if (typeof this.onClick === "function") {
+        this.onClick();
+      }
+    }
+  }
+
+  mouseReleased() {
+    this.pressed = false;
+  }
 
   mouseDragged() {}
 }

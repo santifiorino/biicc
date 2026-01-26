@@ -90,9 +90,17 @@ function parseOscMessage(oscMsg) {
   const addressParts = oscMsg.address.split("/");
   switch (addressParts[1]) {
     case "update":
-      const setting = addressParts[2];
-      const value = oscMsg.args[0].value;
-      settings[setting] = value;
+      if (addressParts[2] === "dc") {
+        const id = oscMsg.args?.[0]?.value;
+        const value = oscMsg.args?.[1]?.value;
+        if (typeof id === "number" && typeof value === "number") {
+          settings["dc " + id] = value;
+        }
+      } else {
+        const setting = addressParts[2];
+        const value = oscMsg.args[0].value;
+        settings[setting] = value;
+      }
       break;
     case "getState":
       const controllerId = oscMsg.args[0].value;

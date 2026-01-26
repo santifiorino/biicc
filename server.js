@@ -46,6 +46,81 @@ server.listen(HTTP_PORT, () => {
 
 let simulationWs = null;
 let controllers = {}; // { controllerId: controllerWs }
+// Assignment tracking
+let numNeurons = null; // learned from simulation state
+let neuronLoad = []; // length = numNeurons, counts of connected controllers
+let controllerAssignment = {}; // controllerId -> 1-based neuron index
+
+function ensureNeuronCapacity(n) {
+  if (typeof n !== "number" || n <= 0) return;
+  if (numNeurons !== n) {
+    numNeurons = n;
+    const newLoad = new Array(numNeurons).fill(0);
+    // Recount from existing assignments to be safe
+    for (const cid of Object.keys(controllerAssignment)) {
+      const idx = controllerAssignment[cid];
+      if (idx >= 1 && idx <= numNeurons) {
+        newLoad[idx - 1] += 1;
+      }
+    }
+    neuronLoad = newLoad;
+  } else if (neuronLoad.length !== numNeurons) {
+    neuronLoad = new Array(numNeurons).fill(0);
+    for (const cid of Object.keys(controllerAssignment)) {
+      const idx = controllerAssignment[cid];
+      if (idx >= 1 && idx <= numNeurons) {
+        neuronLoad[idx - 1] += 1;
+      }
+    }
+  }
+}
+
+function assignNeuronToController(controllerId) {
+  if (!controllerId) return null;
+  if (controllerAssignment[controllerId])
+    return controllerAssignment[controllerId];
+  if (!numNeurons || numNeurons <= 0) return null; // wait until we know
+  if (!neuronLoad || neuronLoad.length !== numNeurons) {
+    neuronLoad = new Array(numNeurons).fill(0);
+  }
+  // Find smallest load, then smallest index among those
+  let minLoad = Infinity;
+  for (let i = 0; i < numNeurons; i++) {
+    if (neuronLoad[i] < minLoad) minLoad = neuronLoad[i];
+  }
+  let chosen = 0; // 0-based
+  for (let i = 0; i < numNeurons; i++) {
+    if (neuronLoad[i] === minLoad) {
+      chosen = i;
+      break;
+    }
+  }
+  neuronLoad[chosen] += 1;
+  const assigned = chosen + 1; // 1-based neuron numbering
+  controllerAssignment[controllerId] = assigned;
+  return assigned;
+}
+
+function notifyAssignment(controllerId) {
+  const ws = controllers[controllerId];
+  const assigned = controllerAssignment[controllerId];
+  if (!ws || !assigned) return;
+  ws.send(
+    osc.writePacket({
+      address: "/assignment/neuron",
+      args: [{ type: "i", value: assigned }],
+    }),
+  );
+}
+
+function freeAssignmentFor(controllerId) {
+  const assigned = controllerAssignment[controllerId];
+  if (assigned && neuronLoad && neuronLoad.length >= assigned) {
+    neuronLoad[assigned - 1] = Math.max(0, neuronLoad[assigned - 1] - 1);
+  }
+  delete controllerAssignment[controllerId];
+}
+
 const wss = new WebSocket.Server({ port: WS_PORT });
 
 // Capacity check endpoint
@@ -115,6 +190,11 @@ wss.on("connection", (ws) => {
           }
         }
         controllers[controllerId] = ws;
+        // If we already know number of neurons, assign immediately; otherwise we'll assign after first state
+        if (numNeurons) {
+          const assigned = assignNeuronToController(controllerId);
+          if (assigned) notifyAssignment(controllerId);
+        }
         // ask the simulation for its state for the controller to sync
         // TODO: since we now only have one simulation, now we might just store the state in the server
         simulationWs.send(
@@ -127,19 +207,40 @@ wss.on("connection", (ws) => {
         break;
       case "state":
         controllerId = oscMsg.args[0].value;
+        // Learn neuron count from state length and ensure structures
+        // Exclude the first arg (controllerId)
+        ensureNeuronCapacity(oscMsg.args.length - 1);
+        // Forward state to the controller (without controllerId)
         controllers[controllerId].send(
           osc.writePacket({
             address: oscMsg.address,
             args: oscMsg.args.slice(1),
           }),
         );
+        // If not assigned yet, assign now that we know numNeurons
+        if (!controllerAssignment[controllerId]) {
+          const assigned = assignNeuronToController(controllerId);
+          if (assigned) notifyAssignment(controllerId);
+        }
         break;
       case "update":
+        console.log("update", oscMsg);
         // Send the update to the simulation
         controllerId = controllerWs2Id(ws);
         if (simulationWs == null) return; // no simulation is registered
         simulationWs.send(osc.writePacket(oscMsg));
         // Send the update to all other controllers
+        for (let controller of Object.keys(controllers)) {
+          if (controller == controllerId) continue;
+          controllers[controller].send(osc.writePacket(oscMsg));
+        }
+        break;
+      case "pulse":
+        console.log("pulse", oscMsg);
+        // Forward pulse to simulation and other controllers (same as update)
+        controllerId = controllerWs2Id(ws);
+        if (simulationWs == null) return; // no simulation is registered
+        simulationWs.send(osc.writePacket(oscMsg));
         for (let controller of Object.keys(controllers)) {
           if (controller == controllerId) continue;
           controllers[controller].send(osc.writePacket(oscMsg));
@@ -157,6 +258,7 @@ wss.on("connection", (ws) => {
     const controllerId = controllerWs2Id(ws);
     if (controllerId) {
       delete controllers[controllerId];
+      freeAssignmentFor(controllerId);
       console.log(`Controller ${controllerId} disconnected`);
     }
   });
