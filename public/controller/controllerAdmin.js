@@ -17,6 +17,9 @@ let dropSlider = null;
 const adminToggles = [];
 let dropOrder = [];
 let dropOrderKeys = [];
+let volumeSlider = null;
+let muteButton = null;
+let scopesButton = null;
 
 const layout = {
     marginX: 12,
@@ -38,6 +41,19 @@ const layout = {
     panelPadX: 16,
     panelPadY: 24,
 };
+
+function handleDisconnect(message) {
+    // Stop drawing and hide canvas
+    noLoop();
+    const canvas = document.querySelector('canvas');
+    if (canvas) canvas.style.display = 'none';
+    
+    // Show disconnect message
+    const messageDiv = document.createElement('div');
+    messageDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #111; border: 2px solid #ff0000; padding: 30px; border-radius: 10px; color: #ff0000; font-size: 18px; text-align: center; z-index: 10000;';
+    messageDiv.textContent = message;
+    document.body.appendChild(messageDiv);
+}
 
 function setup() {
     createCanvas(windowWidth, windowHeight);
@@ -88,7 +104,26 @@ function setup() {
 function parseOscMessage(oscMsg) {
     const addressParts = oscMsg.address.split("/");
     switch (addressParts[1]) {
+        case "disconnect": {
+            const message = oscMsg.args?.[0]?.value || "Disconnected by server";
+            handleDisconnect(message);
+            break;
+        }
         case "update": {
+            // Handle dc updates in the format /update/dc with args [id, value]
+            if (addressParts[2] === "dc") {
+                const id = oscMsg.args?.[0]?.value;
+                const value = oscMsg.args?.[1]?.value;
+                if (typeof id === "number" && typeof value === "number") {
+                    const slider = adminSliders.find((s) => s.neuronId === id);
+                    if (slider) {
+                        slider.value = value;
+                    }
+                    settings["dc " + id] = value;
+                }
+                break;
+            }
+            
             const neuronName = addressParts[2];
             if (/^dc \d+$/.test(neuronName)) {
                 const neuronId = parseInt(neuronName.split(" ")[1], 10);
@@ -122,6 +157,18 @@ function parseOscMessage(oscMsg) {
                 if (slider) {
                     slider.value = oscMsg.args[0].value;
                 }
+            }
+            if (neuronName === "audio volume") {
+                settings[neuronName] = oscMsg.args[0].value;
+                if (volumeSlider) {
+                    volumeSlider.value = oscMsg.args[0].value;
+                }
+            }
+            if (neuronName === "audio mute") {
+                settings[neuronName] = oscMsg.args[0].value;
+            }
+            if (neuronName === "show scopes") {
+                settings[neuronName] = oscMsg.args[0].value;
             }
             if (/^syn type \d+$/.test(neuronName)) {
                 const neuronId = parseInt(neuronName.split(" ")[2], 10);
@@ -178,6 +225,9 @@ function createAdminControls() {
     adminForceSliders.length = 0;
     dropSlider = null;
     adminToggles.length = 0;
+    volumeSlider = null;
+    muteButton = null;
+    scopesButton = null;
 
     if (!neuronsAmount) return;
 
@@ -262,13 +312,27 @@ function createB1Controls(x, y, w, h) {
     const innerX = x + layout.panelPadX;
     const innerY = y + layout.panelPadY;
     const innerW = w - layout.panelPadX * 2;
+    const innerH = h - layout.panelPadY * 2;
     const sliderWidth = innerW;
     const sliderHeight = layout.paramSliderHeight;
-    const rowGap = 20;
+    
+    // Calculate dynamic spacing to fit all controls
+    const numForceSliders = 4;
+    const numAudioRows = 1; // Volume slider + mute + scopes button on same row
+    const totalElements = numForceSliders + numAudioRows;
+    
+    // Add space for labels above sliders
+    const labelSpace = 18;
+    const totalSliderSpace = (sliderHeight + labelSpace) * numForceSliders + (layout.buttonHeight + labelSpace) * numAudioRows;
+    const availableGapSpace = innerH - totalSliderSpace;
+    const rowGap = Math.max(6, Math.min(15, availableGapSpace / (totalElements + 1)));
+    
+    let currentY = innerY;
 
+    // Force sliders
     adminPulseForceSlider = new AdminParamSlider(
         innerX,
-        innerY,
+        currentY + labelSpace,
         sliderWidth,
         sliderHeight,
         "Pulse Force",
@@ -278,10 +342,11 @@ function createB1Controls(x, y, w, h) {
         (val) => updateSetting("pulse force", val),
         "pulse force"
     );
+    currentY += sliderHeight + labelSpace + rowGap;
 
     adminForceSliders.push(new AdminParamSlider(
         innerX,
-        innerY + rowGap + sliderHeight,
+        currentY + labelSpace,
         sliderWidth,
         sliderHeight,
         "Gravity",
@@ -291,30 +356,81 @@ function createB1Controls(x, y, w, h) {
         (val) => updateSetting("gravity force", val),
         "gravity force"
     ));
+    currentY += sliderHeight + labelSpace + rowGap;
+
     adminForceSliders.push(new AdminParamSlider(
         innerX,
-        innerY + (rowGap + sliderHeight) * 2,
+        currentY + labelSpace,
         sliderWidth,
         sliderHeight,
         "Repel",
         getParamValue("repel force", 10000),
         0,
-        6666.6667,
+        10000,
         (val) => updateSetting("repel force", val),
         "repel force"
     ));
+    currentY += sliderHeight + labelSpace + rowGap;
+
     adminForceSliders.push(new AdminParamSlider(
         innerX,
-        innerY + (rowGap + sliderHeight) * 3,
+        currentY + labelSpace,
         sliderWidth,
         sliderHeight,
         "Attract",
         getParamValue("attract force", 0.00005),
         0,
-        0.0003333,
+        0.0008,
         (val) => updateSetting("attract force", val),
         "attract force"
     ));
+    currentY += sliderHeight + labelSpace + rowGap;
+
+    // Audio controls (volume slider + mute button + scopes button on same row)
+    const volumeWidth = sliderWidth * 0.42;
+    const muteWidth = sliderWidth * 0.28;
+    const scopesWidth = sliderWidth * 0.27;
+    const buttonGap = sliderWidth * 0.015;
+    
+    volumeSlider = new AdminParamSlider(
+        innerX,
+        currentY + labelSpace,
+        volumeWidth,
+        sliderHeight,
+        "Volume",
+        getParamValue("audio volume", -12),
+        -60,
+        0,
+        (val) => updateSetting("audio volume", val),
+        "audio volume"
+    );
+
+    muteButton = new AdminButton(
+        innerX + volumeWidth + buttonGap,
+        currentY + labelSpace,
+        muteWidth,
+        layout.buttonHeight,
+        "Mute",
+        () => {
+            const currentMute = getParamValue("audio mute", 0);
+            const newMute = currentMute > 0.5 ? 0 : 1;
+            updateSetting("audio mute", newMute);
+        }
+    );
+    
+    scopesButton = new AdminButton(
+        innerX + volumeWidth + buttonGap + muteWidth + buttonGap,
+        currentY + labelSpace,
+        scopesWidth,
+        layout.buttonHeight,
+        "Scopes",
+        () => {
+            const currentScopes = getParamValue("show scopes", 0);
+            const newScopes = currentScopes > 0.5 ? 0 : 1;
+            updateSetting("show scopes", newScopes);
+        }
+    );
+    currentY += Math.max(sliderHeight, layout.buttonHeight) + labelSpace + rowGap;
 }
 
 function createKnobGrid(x, y, w, h) {
@@ -539,6 +655,15 @@ function draw() {
     for (const slider of adminForceSliders) {
         slider.draw();
     }
+    if (volumeSlider) {
+        volumeSlider.draw();
+    }
+    if (muteButton) {
+        muteButton.draw();
+    }
+    if (scopesButton) {
+        scopesButton.draw();
+    }
     for (const button of adminButtons) {
         button.draw();
     }
@@ -570,7 +695,7 @@ function connectToSimulation() {
     settings = {};
     neuronsAmount = 0;
     const oscMessage = {
-        address: "/connectController",
+        address: "/connectAdmin",
         args: [
             {
                 type: "s",
@@ -583,15 +708,30 @@ function connectToSimulation() {
 
 function updateSetting(setting, value) {
     settings[setting] = value;
-    const oscMessage = {
-        address: "/update/" + setting,
-        args: [
-            {
-                type: "f",
-                value: value,
-            },
-        ],
-    };
+    let oscMessage;
+    
+    // Handle dc updates with the same format as regular controllers
+    if (/^dc \d+$/.test(setting)) {
+        const id = parseInt(setting.split(" ")[1], 10);
+        oscMessage = {
+            address: "/update/dc",
+            args: [
+                { type: "i", value: id },
+                { type: "f", value: value },
+            ],
+        };
+    } else {
+        oscMessage = {
+            address: "/update/" + setting,
+            args: [
+                {
+                    type: "f",
+                    value: value,
+                },
+            ],
+        };
+    }
+    
     oscWebSocket.send(oscMessage);
 }
 
@@ -610,6 +750,15 @@ function mousePressed() {
     }
     for (const slider of adminForceSliders) {
         slider.mousePressed();
+    }
+    if (volumeSlider) {
+        volumeSlider.mousePressed();
+    }
+    if (muteButton) {
+        muteButton.mousePressed();
+    }
+    if (scopesButton) {
+        scopesButton.mousePressed();
     }
     for (const button of adminButtons) {
         button.mousePressed();
@@ -641,6 +790,9 @@ function mouseDragged() {
     for (const slider of adminForceSliders) {
         slider.mouseDragged();
     }
+    if (volumeSlider) {
+        volumeSlider.mouseDragged();
+    }
     if (dropSlider) {
         dropSlider.mouseDragged();
     }
@@ -664,6 +816,9 @@ function mouseReleased() {
     }
     for (const slider of adminForceSliders) {
         slider.mouseReleased();
+    }
+    if (volumeSlider) {
+        volumeSlider.mouseReleased();
     }
     if (dropSlider) {
         dropSlider.mouseReleased();
@@ -786,8 +941,7 @@ class AdminToggle {
 
     mousePressed() {
         if (mouseX >= this.x && mouseX <= this.x + this.w && mouseY >= this.y && mouseY <= this.y + this.h) {
-            const isLeft = mouseX < this.x + this.w / 2;
-            this.value = isLeft ? 1 : -1;
+            this.value = this.value >= 0 ? -1 : 1;
             if (this.onChange) {
                 this.onChange(this.value);
             }

@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Monitor - SNN</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #000;
+            color: #fff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #fff;
+            padding-bottom: 10px;
+            color: #fff;
+        }
+
+        h2 {
+            font-size: 18px;
+            margin: 20px 0 10px 0;
+            color: #fff;
+        }
+
+        .panel {
+            background: #000;
+            border: 1px solid #fff;
+            border-radius: 6px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .clients-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .client-card {
+            background: #000;
+            border: 1px solid #fff;
+            border-radius: 6px;
+            padding: 15px;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .client-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .client-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .led {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #333;
+            transition: background 0.2s;
+        }
+
+        .led.active {
+            background: #fff;
+            box-shadow: 0 0 10px #fff;
+        }
+
+        .client-id {
+            font-weight: bold;
+            font-size: 14px;
+            color: #fff;
+        }
+
+        .client-type {
+            color: #888;
+            font-size: 12px;
+        }
+
+        .disconnect-btn {
+            background: #fff;
+            color: #000;
+            border: none;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            padding: 0;
+            transition: background 0.2s;
+        }
+
+        .disconnect-btn:hover {
+            background: #ccc;
+        }
+
+        .client-details {
+            font-size: 12px;
+            color: #666;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .osc-docs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 15px;
+        }
+
+        .osc-section {
+            background: #000;
+            border: 1px solid #fff;
+            border-radius: 6px;
+            padding: 15px;
+        }
+
+        .osc-section h3 {
+            color: #fff;
+            font-size: 16px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #fff;
+            padding-bottom: 5px;
+        }
+
+        .osc-item {
+            margin: 10px 0;
+            padding: 10px;
+            background: #000;
+            border-left: 3px solid #fff;
+            border-radius: 3px;
+        }
+
+        .osc-address {
+            font-weight: bold;
+            color: #fff;
+            margin-bottom: 5px;
+        }
+
+        .osc-description {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .osc-args {
+            font-size: 11px;
+            color: #666;
+            font-style: italic;
+        }
+
+        .stats {
+            display: flex;
+            gap: 30px;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stat-value {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        @media (max-width: 900px) {
+            .osc-docs {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>SNN Server Monitor</h1>
+
+        <div class="panel">
+            <h2>Connected Clients</h2>
+            <div class="stats">
+                <div class="stat-item">
+                    <span>Total:</span>
+                    <span class="stat-value" id="totalClients">0</span>
+                </div>
+                <div class="stat-item">
+                    <span>Simulation:</span>
+                    <span class="stat-value" id="simulationStatus">Disconnected</span>
+                </div>
+                <div class="stat-item">
+                    <span>Controllers:</span>
+                    <span class="stat-value" id="controllerCount">0</span>
+                </div>
+            </div>
+            <div class="clients-grid" id="clientsList">
+                <div class="client-card">
+                    <div style="text-align: center; color: #666;">Loading...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>OSC Protocol Documentation</h2>
+            <div class="osc-docs">
+                <div class="osc-section">
+                    <h3>Controller → Server → Simulation</h3>
+                    <div id="oscControllerToSim"></div>
+                </div>
+                <div class="osc-section">
+                    <h3>Admin Panel → Server → Simulation</h3>
+                    <div id="oscAdminToSim"></div>
+                </div>
+            </div>
+            <div class="osc-docs">
+                <div class="osc-section">
+                    <h3>Simulation/Server → Clients</h3>
+                    <div id="oscSimToClients"></div>
+                </div>
+                <div class="osc-section">
+                    <h3>Server Broadcast (State Sync)</h3>
+                    <div id="oscServerBroadcast"></div>
+                </div>
+            </div>
+            <div class="osc-docs">
+                <div class="osc-section">
+                    <h3>Server → External OSC (UDP)</h3>
+                    <div id="oscForwarded"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="osc-browser.min.js"></script>
+    <script>
+        let oscWebSocket = null;
+        let clients = {};
+        let prevClients = {}; // Track previous state to detect changes
+        let activityTimers = {};
+
+        function init() {
+            renderOscDocs();
+            updateClients();
+            setInterval(updateClients, 1000); // Less frequent polling now that we have WebSocket
+            connectWebSocket();
+        }
+
+        function connectWebSocket() {
+            fetch("/api/config")
+                .then((r) => r.json())
+                .then((cfg) => {
+                    const wsUrl = (cfg && typeof cfg.wsUrl === "string" && cfg.wsUrl) || `ws://${location.hostname}:9000`;
+                    
+                    oscWebSocket = new osc.WebSocketPort({
+                        url: wsUrl,
+                        metadata: true,
+                    });
+
+                    oscWebSocket.on("ready", function () {
+                        console.log('Monitor WebSocket connected');
+                        oscWebSocket.send({
+                            address: "/connectMonitor",
+                            args: []
+                        });
+                    });
+
+                    oscWebSocket.on("message", function (oscMsg) {
+                        if (oscMsg.address === "/activity") {
+                            const clientId = oscMsg.args?.[0]?.value;
+                            if (clientId) {
+                                flashLED(clientId);
+                            }
+                        }
+                    });
+
+                    oscWebSocket.open();
+                })
+                .catch((err) => {
+                    console.error("Error connecting monitor WebSocket:", err);
+                });
+        }
+
+        // OSC Documentation organized by sender → receiver
+        const oscDocumentation = {
+            controllerToSim: [
+                {
+                    address: '/connectController',
+                    description: 'Controller connects to server',
+                    args: '[s: controllerId]',
+                    from: 'Controller',
+                    to: 'Server'
+                },
+                {
+                    address: '/update/dc <n>',
+                    description: 'Update DC input current for assigned neuron',
+                    args: '[i: neuronId, f: value]',
+                    from: 'Controller',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/spike <n>',
+                    description: 'Manual trigger spike in assigned neuron',
+                    args: '[f: value (1 = spike)]',
+                    from: 'Controller',
+                    to: 'Simulation'
+                }
+            ],
+            adminToSim: [
+                {
+                    address: '/connectAdmin',
+                    description: 'Admin panel connects to server',
+                    args: '[s: adminId]',
+                    from: 'Admin Panel',
+                    to: 'Server'
+                },
+                {
+                    address: '/update/spike <n>',
+                    description: 'Trigger spike in any neuron',
+                    args: '[f: value (1 = spike)]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/syn type <n>',
+                    description: 'Set neuron n type (Excitatory/Inhibitory)',
+                    args: '[f: value (1=E, -1=I)]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/syn type',
+                    description: 'Set E/I proportion for all neurons',
+                    args: '[f: proportion (0-1)]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/weight <from> <to>',
+                    description: 'Set synapse weight',
+                    args: '[f: weight]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/drop <from> <to>',
+                    description: 'Set synapse drop state',
+                    args: '[f: dropped (0=active, 1=dropped)]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/weight mean',
+                    description: 'Regenerate all weights with new mean',
+                    args: '[f: mean]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/weight size',
+                    description: 'Set weight distribution size',
+                    args: '[f: size]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/delay mean',
+                    description: 'Regenerate all delays with new mean',
+                    args: '[f: mean]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/delay size',
+                    description: 'Set delay distribution size',
+                    args: '[f: size]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/dropout',
+                    description: 'Set synapse dropout probability',
+                    args: '[f: probability (0-1)]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/pulse force',
+                    description: 'Set impulse force for physics',
+                    args: '[f: force]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/gravity force',
+                    description: 'Set gravity force constant',
+                    args: '[f: force]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/repel force',
+                    description: 'Set repulsive force between nodes',
+                    args: '[f: force]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/attract force',
+                    description: 'Set attractive force constant',
+                    args: '[f: force]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/audio volume',
+                    description: 'Set Tone.js master volume',
+                    args: '[f: dB (-60 to 0)]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/audio mute',
+                    description: 'Mute/unmute audio',
+                    args: '[f: muted (0=unmuted, 1=muted)]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/update/show scopes',
+                    description: 'Toggle scopes/scores display',
+                    args: '[f: show (0=hidden, 1=visible)]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                }
+            ],
+            simToClients: [
+                {
+                    address: '/state/neurons',
+                    description: 'Full neuron DC state sent on controller connection',
+                    args: '[s: controllerId, f: dc1, f: dc2, ...]',
+                    from: 'Simulation',
+                    to: 'Controller'
+                },
+                {
+                    address: '/assignment/neuron',
+                    description: 'Neuron assignment when controller connects',
+                    args: '[i: neuronId]',
+                    from: 'Server',
+                    to: 'Controller'
+                },
+                {
+                    address: '/disconnect',
+                    description: 'Forced disconnect notification',
+                    args: '[s: message]',
+                    from: 'Server',
+                    to: 'Disconnected Client'
+                },
+                {
+                    address: '/activity',
+                    description: 'Real-time client activity indicator',
+                    args: '[s: clientId]',
+                    from: 'Server',
+                    to: 'Monitor'
+                }
+            ],
+            serverBroadcast: [
+                {
+                    address: '/update/*',
+                    description: 'ALL control messages are broadcast by server to sync state',
+                    args: '[varies by message type]',
+                    from: 'Server',
+                    to: 'All Clients (except sender)'
+                },
+                {
+                    address: 'Examples:',
+                    description: '/update/dc, /update/weight, /update/spike, /update/pulse force, /update/gravity force, /update/audio volume, etc.',
+                    args: '',
+                    from: '',
+                    to: ''
+                }
+            ],
+            forwarded: [
+                {
+                    address: '/pulse',
+                    description: 'Neuron spike event (when neuron fires)',
+                    args: '[i: neuronId]',
+                    from: 'Simulation',
+                    to: 'External OSC (UDP)'
+                },
+                {
+                    address: '/update/dc <n>',
+                    description: 'DC changes from controllers',
+                    args: '[i: neuronId, f: value]',
+                    from: 'Controller',
+                    to: 'External OSC (UDP)'
+                }
+            ]
+        };
+
+        function init() {
+            renderOscDocs();
+            updateClients();
+            setInterval(updateClients, 1000); // Less frequent polling now that we have WebSocket
+            connectWebSocket();
+        }
+
+        function connectWebSocket() {
+            fetch('/api/config')
+                .then(r => r.json())
+                .then(cfg => {
+                    const wsUrl = (cfg && cfg.wsUrl) || `ws://${location.hostname}:9000`;
+                    oscWebSocket = new osc.WebSocketPort({ url: wsUrl, metadata: true });
+                    
+                    oscWebSocket.on('ready', () => {
+                        console.log('Monitor WebSocket connected');
+                        oscWebSocket.send({
+                            address: "/connectMonitor",
+                            args: []
+                        });
+                    });
+
+                    oscWebSocket.on("message", function (oscMsg) {
+                        if (oscMsg.address === "/activity") {
+                            const clientId = oscMsg.args?.[0]?.value;
+                            if (clientId) {
+                                flashLED(clientId);
+                            }
+                        }
+                    });
+
+                    oscWebSocket.open();
+                })
+                .catch(err => {
+                    console.error('Error connecting WebSocket:', err);
+                });
+        }
+
+        function updateClients() {
+            fetch('/api/clients')
+                .then(r => r.json())
+                .then(data => {
+                    // Check for activity changes
+                    Object.entries(data.clients || {}).forEach(([id, client]) => {
+                        const prevClient = prevClients[id];
+                        if (prevClient && client.lastActivity !== prevClient.lastActivity) {
+                            flashLED(id);
+                        }
+                    });
+                    
+                    prevClients = JSON.parse(JSON.stringify(data.clients || {}));
+                    clients = data.clients || {};
+                    renderClients(data);
+                })
+                .catch(err => {
+                    console.error('Error fetching clients:', err);
+                });
+        }
+
+        function renderClients(data) {
+            const container = document.getElementById('clientsList');
+            const clientsArray = Object.entries(clients);
+            
+            document.getElementById('totalClients').textContent = clientsArray.length;
+            document.getElementById('simulationStatus').textContent = data.hasSimulation ? 'Connected' : 'Disconnected';
+            document.getElementById('controllerCount').textContent = data.controllerCount || 0;
+
+            if (clientsArray.length === 0) {
+                container.innerHTML = '<div class="client-card"><div style="text-align: center; color: #666;">No clients connected</div></div>';
+                return;
+            }
+
+            container.innerHTML = clientsArray.map(([id, client]) => {
+                const type = client.type || 'Unknown';
+                const assignment = client.assignment ? ` → Neuron ${client.assignment}` : '';
+                const lastActivity = client.lastActivity 
+                    ? `Last: ${new Date(client.lastActivity).toLocaleTimeString()}`
+                    : 'No activity';
+                
+                return `
+                    <div class="client-card">
+                        <div class="client-header">
+                            <div class="client-info">
+                                <div class="led" id="led-${id}"></div>
+                                <div>
+                                    <div class="client-id">${id}</div>
+                                    <div class="client-type">${type}${assignment}</div>
+                                </div>
+                            </div>
+                            <button class="disconnect-btn" onclick="disconnectClient('${id}')" title="Disconnect">x</button>
+                        </div>
+                        <div class="client-details">
+                            <div>${lastActivity}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function flashLED(clientId) {
+            const led = document.getElementById(`led-${clientId}`);
+            if (led) {
+                led.classList.add('active');
+                
+                if (activityTimers[clientId]) {
+                    clearTimeout(activityTimers[clientId]);
+                }
+                
+                activityTimers[clientId] = setTimeout(() => {
+                    led.classList.remove('active');
+                }, 500);
+            }
+        }
+
+        function disconnectClient(clientId) {
+            if (confirm(`Disconnect client ${clientId}?`)) {
+                fetch(`/api/clients/${clientId}`, { method: 'DELETE' })
+                    .then(() => {
+                        console.log(`Disconnected ${clientId}`);
+                        updateClients();
+                    })
+                    .catch(err => {
+                        console.error('Error disconnecting client:', err);
+                    });
+            }
+        }
+
+        function renderOscDocs() {
+            const controllerToSimContainer = document.getElementById('oscControllerToSim');
+            const adminToSimContainer = document.getElementById('oscAdminToSim');
+            const simToClientsContainer = document.getElementById('oscSimToClients');
+            const serverBroadcastContainer = document.getElementById('oscServerBroadcast');
+            const forwardedContainer = document.getElementById('oscForwarded');
+
+            const renderItems = (items) => items.map(item => `
+                <div class="osc-item">
+                    <div class="osc-address">${item.address}</div>
+                    <div class="osc-description">${item.description}</div>
+                    <div class="osc-args">Args: ${item.args}</div>
+                    ${item.from ? `<div class="osc-args" style="color: #999; margin-top: 3px;">From: ${item.from} → To: ${item.to}</div>` : ''}
+                </div>
+            `).join('');
+
+            controllerToSimContainer.innerHTML = renderItems(oscDocumentation.controllerToSim);
+            adminToSimContainer.innerHTML = renderItems(oscDocumentation.adminToSim);
+            simToClientsContainer.innerHTML = renderItems(oscDocumentation.simToClients);
+            serverBroadcastContainer.innerHTML = renderItems(oscDocumentation.serverBroadcast);
+            forwardedContainer.innerHTML = renderItems(oscDocumentation.forwarded);
+        }
+
+        init();
+    </script>
+</body>
+</html>

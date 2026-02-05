@@ -113,7 +113,7 @@ class Knob {
   }
 }
 class Pulse {
-  constructor(p1, p2, delay, syn_type) {
+  constructor(p1, p2, delay, syn_type, fromId, toId) {
     this.p1 = p1;
     this.p2 = p2;
     this.delay = delay;
@@ -123,6 +123,9 @@ class Pulse {
     this.on = true;
     this.syn_type = syn_type;
     this.syn_color = syn_colors[syn_type.toString()];
+    this.fromId = fromId;
+    this.toId = toId;
+    this.arrival_callback = null;
   }
   add_event() {
     this.pulses.push(0);
@@ -134,8 +137,11 @@ class Pulse {
     this.syn_type = syn_type;
     this.syn_color = syn_colors[syn_type.toString()];
   }
+  set_arrival_callback(callback) {
+    this.arrival_callback = callback;
+  }
   draw(size) {
-    if (this.on) {
+    if (this.on && size > 0.1) {
       push();
       translate(net_offset_x, net_offset_y);
       scale(net_scale);
@@ -148,6 +154,10 @@ class Pulse {
         let p3 = p5.Vector.lerp(this.p1m, this.p2m, t);
         circle(p3.x, p3.y, size);
         this.pulses[i] += 1 / fr / (this.delay + 0.001);
+        // Check if pulse just arrived (crossed threshold)
+        if (this.pulses[i] >= 1 && t < 1 && this.arrival_callback) {
+          this.arrival_callback(this.fromId, this.toId, size);
+        }
       }
       this.pulses = this.pulses.filter((x) => x < 1);
       pop();

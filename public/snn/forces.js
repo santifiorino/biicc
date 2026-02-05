@@ -26,11 +26,23 @@ function applyForces(nodes) {
     node1.force.sub(dis);
     node2.force.add(dis);
   });
+
+  // apply pulse impulses
+  nodes.forEach((node) => {
+    if (node.impulse) {
+      node.force.add(node.impulse);
+      node.impulse.mult(pulseDecay);
+      if (node.impulse.mag() < 0.001) {
+        node.impulse.mult(0);
+      }
+    }
+  });
 }
 
 function Node(pos, size) {
   this.pos = pos;
   this.force = createVector(0, 0);
+  this.impulse = createVector(0, 0);
   this.mass = (2 * PI * size) / 1.5;
   this.fs = [];
 }

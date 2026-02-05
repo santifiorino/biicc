@@ -13,9 +13,42 @@ let initialized = false;
 let assignedNeuronId = null; // 1-based neuron id assigned by backend
 let hasState = false;
 
+function handleDisconnect(message) {
+  // Hide all controls
+  noLoop(); // Stop p5.js draw loop
+  const canvas = document.querySelector('canvas');
+  if (canvas) canvas.style.display = 'none';
+  
+  // Show disconnect message - full screen, same background as canvas
+  const messageDiv = document.createElement('div');
+  messageDiv.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+    color: #fff;
+    font-family: 'Courier New', monospace;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 20px;
+    z-index: 10000;
+  `;
+  messageDiv.textContent = message;
+  document.body.appendChild(messageDiv);
+}
+
 function parseOscMessage(oscMsg) {
   const addressParts = oscMsg.address.split("/");
   switch (addressParts[1]) {
+    case "disconnect":
+      const message = oscMsg.args?.[0]?.value || "Disconnected by server";
+      handleDisconnect(message);
+      break;
     case "update":
       if (addressParts[2] === "dc") {
         const id = oscMsg.args?.[0]?.value;
@@ -156,8 +189,12 @@ function createNeuronControlElements() {
   neuronIds = [chosenId];
   neuronControlElements = [];
   neuronExplanationTexts = [];
+  
+  // Convert neuron ID to letter (1->A, 2->B, etc.)
+  const neuronLetter = String.fromCharCode(64 + chosenId); // 65 is 'A'
+  
   // Big neuron label above the slider
-  const bigLabel = new MyText(`${chosenId}`, windowWidth / 2, 110, 64);
+  const bigLabel = new MyText(neuronLetter, windowWidth / 2, 110, 64);
   bigLabel.textSize = 64;
   bigLabel.align = "center";
   neuronExplanationTexts.push(bigLabel);
@@ -199,11 +236,11 @@ function createNeuronControlElements() {
   const pulseButton = new CircleButton(buttonX, buttonY, buttonRadius, () => {
     if (assignedNeuronId) {
       const oscMessage = {
-        address: "/pulse",
+        address: `/update/spike ${assignedNeuronId}`,
         args: [
           {
-            type: "i",
-            value: assignedNeuronId,
+            type: "f",
+            value: 1,
           },
         ],
       };

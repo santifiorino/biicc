@@ -85,14 +85,12 @@ class Slider extends SliderElement {
   }
 
   mousePressed() {
+    // Expanded hit area: check if mouse is anywhere within slider bounds
     if (
-      dist(
-        mouseX,
-        mouseY,
-        this.x + map(this.value, this.min, this.max, 0, this.w),
-        this.y + this.h / 2,
-      ) <
-      (this.h + 10) / 2
+      mouseX >= this.x &&
+      mouseX <= this.x + this.w &&
+      mouseY >= this.y - 20 &&
+      mouseY <= this.y + this.h + 20
     ) {
       this.dragging = true;
       this.value = constrain(
@@ -164,9 +162,13 @@ class VerticalSlider extends SliderElement {
     const innerTop = this.y + margin;
     const innerBottom = this.y + this.h - margin;
     const innerSpan = Math.max(0, innerBottom - innerTop);
-    const t = map(this.value, this.min, this.max, 0, 1);
-    const handleY = innerBottom - t * innerSpan;
-    if (dist(mouseX, mouseY, centerX, handleY) < knobSize / 2) {
+    // Expanded hit area: check if mouse is anywhere within slider bounds with wider horizontal tolerance
+    if (
+      mouseX >= this.x - 20 &&
+      mouseX <= this.x + this.w + 20 &&
+      mouseY >= this.y &&
+      mouseY <= this.y + this.h
+    ) {
       this.dragging = true;
       const clampedY = constrain(mouseY, innerTop, innerBottom);
       this.value = map(clampedY, innerBottom, innerTop, this.min, this.max);

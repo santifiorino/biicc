@@ -1,9 +1,11 @@
 var syn_colors;
 var net_score_border;
 var frame_rate = 60;
+var showScopes = false;
 
 maxDC = 150;
 maxWeight = 80;
+pulseDecay = 0.85;
 
 i = 0;
 marginx = 50;
@@ -36,6 +38,10 @@ function defaultSettings() {
     "syn tau": 1,
     "types all": "rs",
     "sim steps": 2,
+    "pulse force": 1.0,
+    "gravity force": gravityConstant,
+    "repel force": forceConstantRepulsive,
+    "attract force": forceConstantAttractive,
   };
 }
 
@@ -99,6 +105,155 @@ function parseOscMessage(oscMsg) {
       } else {
         const setting = addressParts[2];
         const value = oscMsg.args[0].value;
+        
+        // Debug logging for syn type messages
+        if (setting.includes("syn type")) {
+          console.log(`Received OSC: address="${oscMsg.address}", setting="${setting}", value=${value}`);
+        }
+        
+        // Handle spike trigger
+        if (/^spike \d+$/.test(setting) && value) {
+          const neuronId = parseInt(setting.split(" ")[1], 10);
+          const neuron = NN?.neurons?.[neuronId - 1];
+          if (neuron) {
+            neuron.V = neuron.maxV + 1;
+          }
+          break;
+        }
+        
+        // Handle syn type per neuron
+        if (/^syn type \d+$/.test(setting)) {
+          const neuronId = parseInt(setting.split(" ")[2], 10);
+          const neuron = NN?.neurons?.[neuronId - 1];
+          console.log(`Received syn type update: setting="${setting}", neuronId=${neuronId}, value=${value}, neuron exists=${!!neuron}`);
+          if (neuron) {
+            const oldType = neuron.syn_type;
+            neuron.syn_type = value >= 0 ? 1 : -1;
+            console.log(`Set neuron ${neuronId} syn_type from ${oldType} to ${neuron.syn_type} (value: ${value})`);
+            
+            // Update circle color
+            if (circles && circles[neuronId - 1]) {
+              circles[neuronId - 1].color = syn_colors[neuron.syn_type];
+            }
+            
+            // Update all pulses from this neuron
+            for (let k = 0; k < NN.synapses.length; k++) {
+              if (NN.synapses[k].from.id === neuronId - 1) {
+                pulses[k].set_syn_type(neuron.syn_type);
+              }
+            }
+          }
+          break;
+        }
+        
+        // Handle weight updates
+        if (/^weight \d+ \d+$/.test(setting)) {
+          const parts = setting.split(" ");
+          const fromId = parseInt(parts[1], 10) - 1;
+          const toId = parseInt(parts[2], 10) - 1;
+          for (let k = 0; k < NN.synapses.length; k++) {
+            const S = NN.synapses[k];
+            if (S.from.id === fromId && S.to.id === toId) {
+              S.set_weight(value);
+              if (nodeCon && nodeCon[k]) {
+                nodeCon[k][2] = value;
+              }
+              if (knobs && knobs[k]) {
+                knobs[k].set_value(map(value, 0, maxWeight, 0, 1));
+              }
+              break;
+            }
+          }
+          break;
+        }
+        
+        // Handle drop updates
+        if (/^drop \d+ \d+$/.test(setting)) {
+          const parts = setting.split(" ");
+          const fromId = parseInt(parts[1], 10) - 1;
+          const toId = parseInt(parts[2], 10) - 1;
+          for (let k = 0; k < NN.synapses.length; k++) {
+            const S = NN.synapses[k];
+            if (S.from.id === fromId && S.to.id === toId) {
+              S.drop = value >= 0.5;
+              break;
+            }
+          }
+          break;
+        }
+        
+        // Handle weight mean/size - regenerate all weights
+        if (setting === "weight mean" || setting === "weight size") {
+          settings[setting] = value;
+          NN.set_random_weight(settings["weight mean"], settings["weight size"]);
+          weights_to_nodes(true);
+          broadcastWeights();
+          break;
+        }
+        
+        // Handle delay mean/size - regenerate all delays
+        if (setting === "delay mean" || setting === "delay size") {
+          settings[setting] = value;
+          NN.set_random_delay(settings["delay mean"], settings["delay size"]);
+          delay_to_pulses();
+          break;
+        }
+        
+        // Handle syn type proportion
+        if (setting === "syn type") {
+          settings[setting] = value;
+          NN.set_type_proportion(value);
+          console.log(`Set syn type proportion to ${value}`);
+          broadcastSynTypes();
+          break;
+        }
+        
+        // Handle force updates
+        if (setting === "pulse force") {
+          settings[setting] = value;
+          break;
+        }
+        if (setting === "gravity force") {
+          gravityConstant = value;
+          settings[setting] = value;
+          break;
+        }
+        if (setting === "repel force") {
+          forceConstantRepulsive = value;
+          settings[setting] = value;
+          break;
+        }
+        if (setting === "attract force") {
+          forceConstantAttractive = value;
+          settings[setting] = value;
+          break;
+        }
+        
+        // Handle audio controls
+        if (setting === "audio volume") {
+          settings[setting] = value;
+          if (typeof Tone !== "undefined" && Tone.Destination) {
+            Tone.Destination.volume.value = value;
+          }
+          break;
+        }
+        if (setting === "audio mute") {
+          settings[setting] = value;
+          if (typeof Tone !== "undefined" && Tone.Destination) {
+            Tone.Destination.mute = value > 0.5;
+          }
+          break;
+        }
+        
+        // Handle show scopes toggle
+        if (setting === "show scopes") {
+          settings[setting] = value;
+          showScopes = value > 0.5;
+          createScopes();
+          updateNetLayout();
+          break;
+        }
+        
         settings[setting] = value;
       }
       break;
@@ -162,18 +317,18 @@ function setup() {
       console.error("Error loading configuration", err);
     });
 
-  net_score_border = (net_scale - 0.5) * windowWidth;
   createCanvas(windowWidth, windowHeight);
+  updateNetLayout();
   syn_colors = {
     "-1": color(
-      synapseExcitatoryColor[0],
-      synapseExcitatoryColor[1],
-      synapseExcitatoryColor[2],
-    ),
-    1: color(
       synapseInhibitoryColor[0],
       synapseInhibitoryColor[1],
       synapseInhibitoryColor[2],
+    ),
+    1: color(
+      synapseExcitatoryColor[0],
+      synapseExcitatoryColor[1],
+      synapseExcitatoryColor[2],
     ),
   };
 
@@ -213,6 +368,13 @@ function createCircles() {
     let voice = new Voice(nota, 1 / 16, casio);
     NN.neurons[i].set_event_callback(function () {
       voice.trigger();
+      // Send OSC pulse message when neuron spikes
+      if (oscWebSocket) {
+        oscWebSocket.send({
+          address: `/pulse`,
+          args: [{ type: "i", value: i + 1 }] // Send 1-based neuron ID
+        });
+      }
     });
     voices.push(voice);
     let circle = new Circle(nodes[i].pos, settings["circle size"]);
@@ -224,6 +386,7 @@ function createCircles() {
 function createScopes() {
   scopes = [];
   scores = [];
+  if (!showScopes) return;
   for (let i = 0; i < NN.neurons.length; i++) {
     let y = -i * score_sep + ((NN.neurons.length - 1) * score_sep) / 2;
     scope = new Scope(
@@ -243,6 +406,16 @@ function createScopes() {
   }
 }
 
+function updateNetLayout() {
+  if (showScopes) {
+    net_score_border = (net_scale - 0.5) * width;
+    net_offset_x = -width / 2 + net_score_border / 2;
+  } else {
+    net_score_border = 0;
+    net_offset_x = 0;
+  }
+}
+
 function createPulsesAndKnobs() {
   pulses = [];
   nodeCon = [];
@@ -257,7 +430,10 @@ function createPulsesAndKnobs() {
       circles[j].position,
       S.delay,
       syn_type,
+      i,
+      j,
     );
+    pulse.set_arrival_callback(handlePulseArrival);
     S.set_event_callback(pulse.add_event.bind(pulse));
     pulses.push(pulse);
     nodeCon.push([i, j, S.weight]);
@@ -279,6 +455,16 @@ function createPulsesAndKnobs() {
     });
     knobs.push(knob);
   }
+}
+
+function handlePulseArrival(fromId, toId, size) {
+  if (!nodes?.[toId] || !nodes?.[fromId]) return;
+  const dir = nodes[toId].pos.copy().sub(nodes[fromId].pos);
+  if (dir.mag() === 0) return;
+  dir.normalize();
+  const scale = settings["pulse force"] ?? 0;
+  const impulse = dir.mult(scale * size);
+  nodes[toId].impulse.add(impulse);
 }
 
 function saveNetwork() {
@@ -365,9 +551,11 @@ function draw() {
   }
   for (let i = 0; i < NN.neurons.length; i++) {
     circles[i].draw(NN.neurons[i].Vnorm);
-    if (NN.neurons[i].spike_event) scopes[i].draw(1);
-    else scopes[i].draw(NN.neurons[i].Vnorm);
-    scores[i].draw(NN.neurons[i].spike_event);
+    if (showScopes) {
+      if (NN.neurons[i].spike_event) scopes[i].draw(1);
+      else scopes[i].draw(NN.neurons[i].Vnorm);
+      scores[i].draw(NN.neurons[i].spike_event);
+    }
   }
   for (let k = 0; k < NN.synapses.length; k++) {
     let wnorm = map(NN.synapses[k].weight, 0, maxWeight, 0, 10);
@@ -386,6 +574,28 @@ function weights_to_nodes(propagate) {
     let S = NN.synapses[k];
     nodeCon[k][2] = S.weight;
     if (propagate) knobs[k].set_value(map(S.weight, 0, maxWeight, 0, 1));
+  }
+}
+
+function broadcastWeights() {
+  if (!oscWebSocket || !NN) return;
+  for (let k = 0; k < NN.synapses.length; k++) {
+    const S = NN.synapses[k];
+    oscWebSocket.send({
+      address: `/update/weight ${S.from.id + 1} ${S.to.id + 1}`,
+      args: [{ type: "f", value: S.weight }],
+    });
+  }
+}
+
+function broadcastSynTypes() {
+  if (!oscWebSocket || !NN) return;
+  for (let i = 0; i < NN.neurons.length; i++) {
+    const neuron = NN.neurons[i];
+    oscWebSocket.send({
+      address: `/update/syn type ${neuron.id + 1}`,
+      args: [{ type: "f", value: neuron.syn_type }],
+    });
   }
 }
 
@@ -436,8 +646,7 @@ function touchStarted() {
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  net_score_border = (net_scale - 0.5) * width;
-  net_offset_x = -windowWidth / 2 + net_score_border / 2;
+  updateNetLayout();
   for (let i = 0; i < NN.neurons.length; i++) {
     // scopes[i].width = windowWidth;
     // scopes[i].height = windowHeight / NN.neurons.length;

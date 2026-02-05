@@ -197,6 +197,8 @@ function Synapse(from, to) {
 }
 
 Synapse.prototype.update = function () {
+  // print id and syn_type
+  // console.log(this.id, this.weight * this.from.syn_type );
   this.to.currentBuffer(this.weight * !this.drop, this.delay, this.from);
   if (this.from.spike_event) {
     this.event();
