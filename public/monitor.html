@@ -551,6 +551,13 @@
                             if (clientId) {
                                 flashLED(clientId);
                             }
+                        } else if (oscMsg.address === "/clientDisconnected") {
+                            const clientId = oscMsg.args?.[0]?.value;
+                            if (clientId) {
+                                console.log(`Client ${clientId} disconnected`);
+                                // Trigger immediate update to remove from UI
+                                updateClients();
+                            }
                         }
                     });
 

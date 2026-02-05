@@ -259,6 +259,8 @@ function parseOscMessage(oscMsg) {
       break;
     case "getState":
       const controllerId = oscMsg.args[0].value;
+      
+      // Send DC values for all neurons
       let values = [];
       for (const setting in settings) {
         if (/^dc \d+$/.test(setting)) {
@@ -278,6 +280,30 @@ function parseOscMessage(oscMsg) {
           ...values,
         ],
       });
+      
+      // If admin panel is connecting, also send all weights and syn types
+      if (controllerId.startsWith('admin-')) {
+        // Send all syn types
+        if (NN && NN.neurons) {
+          for (let i = 0; i < NN.neurons.length; i++) {
+            oscWebSocket.send({
+              address: `/update/syn type ${i + 1}`,
+              args: [{ type: "f", value: NN.neurons[i].syn_type }],
+            });
+          }
+        }
+        
+        // Send all weights
+        if (NN && NN.synapses) {
+          for (let k = 0; k < NN.synapses.length; k++) {
+            const S = NN.synapses[k];
+            oscWebSocket.send({
+              address: `/update/weight ${S.from.id + 1} ${S.to.id + 1}`,
+              args: [{ type: "f", value: S.weight }],
+            });
+          }
+        }
+      }
       break;
   }
 }

@@ -6,6 +6,10 @@ let neuronsAmount = 0;
 let maxDC = 150;
 let maxWeight = 80;
 
+// Store incoming state before UI is created
+let pendingWeights = {}; // key: "from-to", value: weight
+let pendingSynTypes = {}; // key: neuronId, value: synType
+
 const adminSliders = [];
 const adminKnobs = [];
 const adminButtons = [];
@@ -172,6 +176,9 @@ function parseOscMessage(oscMsg) {
             }
             if (/^syn type \d+$/.test(neuronName)) {
                 const neuronId = parseInt(neuronName.split(" ")[2], 10);
+                // Store for later if UI not ready
+                pendingSynTypes[neuronId] = oscMsg.args[0].value >= 0 ? 1 : -1;
+                // Update immediately if toggle exists
                 const toggle = adminToggles.find((t) => t.neuronId === neuronId);
                 if (toggle) {
                     toggle.value = oscMsg.args[0].value >= 0 ? 1 : -1;
@@ -181,9 +188,13 @@ function parseOscMessage(oscMsg) {
                 const parts = neuronName.split(" ");
                 const fromId = parseInt(parts[1], 10);
                 const toId = parseInt(parts[2], 10);
+                const weightValue = oscMsg.args[0].value;
+                // Store for later if UI not ready
+                pendingWeights[`${fromId}-${toId}`] = weightValue;
+                // Update immediately if knob exists
                 const knob = adminKnobs.find((k) => k.fromId === fromId && k.toId === toId);
                 if (knob) {
-                    knob.value = constrain(oscMsg.args[0].value / maxWeight, 0, 1);
+                    knob.value = constrain(weightValue / maxWeight, 0, 1);
                 }
             }
             if (/^drop \d+ \d+$/.test(neuronName)) {
@@ -239,6 +250,32 @@ function createAdminControls() {
     createB1Controls(panels.B1.x, panels.B1.y, panels.B1.w, panels.B1.h);
     createKnobGrid(panels.B2.x, panels.B2.y, panels.B2.w, panels.B2.h);
     buildDropOrder();
+    
+    // Apply pending state that arrived before UI was created
+    applyPendingState();
+}
+
+function applyPendingState() {
+    // Apply pending syn types
+    for (const [neuronId, synType] of Object.entries(pendingSynTypes)) {
+        const toggle = adminToggles.find((t) => t.neuronId === parseInt(neuronId));
+        if (toggle) {
+            toggle.value = synType;
+        }
+    }
+    
+    // Apply pending weights
+    for (const [key, weightValue] of Object.entries(pendingWeights)) {
+        const [fromId, toId] = key.split('-').map(id => parseInt(id));
+        const knob = adminKnobs.find((k) => k.fromId === fromId && k.toId === toId);
+        if (knob) {
+            knob.value = constrain(weightValue / maxWeight, 0, 1);
+        }
+    }
+    
+    // Clear pending data
+    pendingSynTypes = {};
+    pendingWeights = {};
 }
 
 function getAdminPanels() {

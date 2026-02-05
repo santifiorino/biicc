@@ -504,6 +504,17 @@ wss.on("connection", (ws) => {
       simulationWs = null;
       delete clientActivity['simulation'];
       console.log(`Simulation disconnected`);
+      // Notify monitor of simulation disconnect
+      if (monitorWs && monitorWs.readyState === WebSocket.OPEN) {
+        try {
+          monitorWs.send(osc.writePacket({
+            address: "/clientDisconnected",
+            args: [{ type: "s", value: "simulation" }]
+          }));
+        } catch (e) {
+          console.error('Error notifying monitor of simulation disconnect:', e);
+        }
+      }
       return;
     }
     const controllerId = controllerWs2Id(ws);
@@ -512,6 +523,17 @@ wss.on("connection", (ws) => {
       delete clientActivity[controllerId];
       freeAssignmentFor(controllerId);
       console.log(`Controller ${controllerId} disconnected`);
+      // Notify monitor of controller disconnect
+      if (monitorWs && monitorWs.readyState === WebSocket.OPEN) {
+        try {
+          monitorWs.send(osc.writePacket({
+            address: "/clientDisconnected",
+            args: [{ type: "s", value: controllerId }]
+          }));
+        } catch (e) {
+          console.error('Error notifying monitor of controller disconnect:', e);
+        }
+      }
       return;
     }
     const adminId = adminWs2Id(ws);
@@ -519,6 +541,17 @@ wss.on("connection", (ws) => {
       delete adminPanels[adminId];
       delete clientActivity[adminId];
       console.log(`Admin panel ${adminId} disconnected`);
+      // Notify monitor of admin panel disconnect
+      if (monitorWs && monitorWs.readyState === WebSocket.OPEN) {
+        try {
+          monitorWs.send(osc.writePacket({
+            address: "/clientDisconnected",
+            args: [{ type: "s", value: adminId }]
+          }));
+        } catch (e) {
+          console.error('Error notifying monitor of admin disconnect:', e);
+        }
+      }
     }
   });
 });
