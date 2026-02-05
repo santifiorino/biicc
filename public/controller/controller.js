@@ -53,32 +53,7 @@ function parseOscMessage(oscMsg) {
   }
 }
 
-class Text {
-  constructor(text, x, y, textSize) {
-    this.text = text;
-    this.x = x;
-    this.y = y;
-    this.color = color(255);
-    this.textSize = textSize || 16;
-    this.align = "left"; // "left" | "center" | "right"
-  }
 
-  draw() {
-    push();
-    noStroke();
-    fill(this.color);
-    textSize(this.textSize);
-    if (this.align === "center") {
-      textAlign(CENTER, BASELINE);
-    } else if (this.align === "right") {
-      textAlign(RIGHT, BASELINE);
-    } else {
-      textAlign(LEFT, BASELINE);
-    }
-    text(this.text, this.x, this.y);
-    pop();
-  }
-}
 
 function getPersistentControllerId() {
   try {
@@ -182,7 +157,7 @@ function createNeuronControlElements() {
   neuronControlElements = [];
   neuronExplanationTexts = [];
   // Big neuron label above the slider
-  const bigLabel = new Text(`${chosenId}`, windowWidth / 2, 110, 64);
+  const bigLabel = new MyText(`${chosenId}`, windowWidth / 2, 110, 64);
   bigLabel.textSize = 64;
   bigLabel.align = "center";
   neuronExplanationTexts.push(bigLabel);

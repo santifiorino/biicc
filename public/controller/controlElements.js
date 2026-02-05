@@ -1,3 +1,29 @@
+class MyText {
+  constructor(text, x, y, textSize) {
+    this.text = text;
+    this.x = x;
+    this.y = y;
+    this.color = color(255);
+    this.textSize = textSize || 16;
+    this.align = "left"; // "left" | "center" | "right"
+  }
+
+  draw() {
+    push();
+    noStroke();
+    fill(this.color);
+    textSize(this.textSize);
+    if (this.align === "center") {
+      textAlign(CENTER, BASELINE);
+    } else if (this.align === "right") {
+      textAlign(RIGHT, BASELINE);
+    } else {
+      textAlign(LEFT, BASELINE);
+    }
+    text(this.text, this.x, this.y);
+    pop();
+  }
+}
 // abstract class for sliders and pads
 class SliderElement {
   constructor(x, y, w, h) {
