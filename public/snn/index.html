@@ -18,7 +18,7 @@
       var n_neurons = 12;
 
       const params = new URLSearchParams(document.location.search);
-      if (params.get("nn")) n_neurons = params.get("nn");
+      if (params.get("nn")) n_neurons = parseInt(params.get("nn"), 10);
     </script>
     <script src="snn.js"></script>
     <script src="visuals.js"></script>

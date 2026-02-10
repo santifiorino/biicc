@@ -49,8 +49,9 @@ function parseOscMessage(oscMsg) {
       const message = oscMsg.args?.[0]?.value || "Disconnected by server";
       handleDisconnect(message);
       break;
-    case "update":
-      if (addressParts[2] === "dc") {
+    case "server":
+      // Handle /server/neuron (single neuron DC update)
+      if (addressParts[2] === "neuron") {
         const id = oscMsg.args?.[0]?.value;
         const value = oscMsg.args?.[1]?.value;
         if (typeof id === "number" && typeof value === "number") {
@@ -64,15 +65,16 @@ function parseOscMessage(oscMsg) {
           settings["dc " + id] = value;
         }
       }
-      break;
-    case "state":
-      console.log(oscMsg);
-      for (let i = 0; i < oscMsg.args.length; i++) {
-        settings["dc " + (i + 1)] = oscMsg.args[i].value;
+      // Handle /server/neurons/dc (initial state for all neurons)
+      else if (addressParts[2] === "neurons" && addressParts[3] === "dc") {
+        // args[0] is controllerId string, rest are DC values
+        for (let i = 1; i < oscMsg.args.length; i++) {
+          settings["dc " + i] = oscMsg.args[i].value;
+        }
+        neuronsAmount = oscMsg.args.length - 1;
+        hasState = true;
+        maybeCreateUI();
       }
-      neuronsAmount = oscMsg.args.length;
-      hasState = true;
-      maybeCreateUI();
       break;
     case "assignment":
       if (addressParts[2] === "neuron") {
@@ -236,7 +238,7 @@ function createNeuronControlElements() {
   const pulseButton = new CircleButton(buttonX, buttonY, buttonRadius, () => {
     if (assignedNeuronId) {
       const oscMessage = {
-        address: `/update/spike ${assignedNeuronId}`,
+        address: `/client/spike ${assignedNeuronId}`,
         args: [
           {
             type: "f",
@@ -311,7 +313,7 @@ function updateSetting(setting, value) {
   if (/^dc \d+$/.test(setting)) {
     const id = parseInt(setting.split(" ")[1], 10);
     oscMessage = {
-      address: "/update/dc",
+      address: "/client/neuron",
       args: [
         { type: "i", value: id },
         { type: "f", value: value },
@@ -319,7 +321,7 @@ function updateSetting(setting, value) {
     };
   } else {
     oscMessage = {
-      address: "/update/" + setting.replace(/\s+/g, "_"),
+      address: "/client/" + setting.replace(/\s+/g, "_"),
       args: [{ type: "f", value: value }],
     };
   }

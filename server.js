@@ -336,6 +336,31 @@ wss.on("connection", (ws) => {
     }
     
     switch (addressParts[1]) {
+      case "pulse":
+        // Handle /pulse messages - only forward to external OSC, don't broadcast to clients
+        // (clients now receive /server/spike/{id} instead)
+        if (ws === simulationWs) {
+          // Already forwarded above, nothing more to do
+          console.log("Simulation pulse forwarded to external OSC only");
+        } else {
+          // If pulse comes from controller/admin, forward to simulation and external OSC
+          controllerId = controllerWs2Id(ws);
+          const pulseAdminId = adminWs2Id(ws);
+          const pulseSenderId = controllerId || pulseAdminId;
+          if (simulationWs) {
+            simulationWs.send(osc.writePacket(oscMsg));
+          }
+          // Forward to external OSC
+          if (oscUdpPort) {
+            try {
+              console.log(`[OSC Forward] ${pulseSenderId || 'unknown'} -> ${config.oscForward.host}:${config.oscForward.port} | ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
+              oscUdpPort.send(oscMsg);
+            } catch (e) {
+              console.error("Error forwarding pulse message:", e);
+            }
+          }
+        }
+        break;
       case "connectMonitor":
         monitorWs = ws;
         console.log('Monitor connected');
@@ -402,28 +427,42 @@ wss.on("connection", (ws) => {
         console.log(`Connected controller ${controllerId} to simulation`);
         break;
       case "state":
-        controllerId = oscMsg.args[0].value;
-        // Learn neuron count from state length and ensure structures
-        // Exclude the first arg (controllerId)
-        ensureNeuronCapacity(oscMsg.args.length - 1);
-        // Forward state to the controller or admin (without controllerId)
-        const targetWs = controllers[controllerId] || adminPanels[controllerId];
-        if (targetWs) {
-          targetWs.send(
-            osc.writePacket({
-              address: oscMsg.address,
-              args: oscMsg.args.slice(1),
-            }),
-          );
-        }
-        // If it's a controller and not assigned yet, assign now that we know numNeurons
-        if (controllers[controllerId] && !controllerAssignment[controllerId]) {
-          const assigned = assignNeuronToController(controllerId);
-          if (assigned) notifyAssignment(controllerId);
+      case "server":
+        // Messages from simulation to clients - broadcast as-is
+        if (addressParts[2] === "neurons") {
+          // /state/neurons or /server/neurons/dc - contains controllerId in first arg
+          controllerId = oscMsg.args[0].value;
+          // Learn neuron count from state length and ensure structures
+          // Exclude the first arg (controllerId)
+          ensureNeuronCapacity(oscMsg.args.length - 1);
+          // Forward state to the controller or admin (without controllerId)
+          const targetWs = controllers[controllerId] || adminPanels[controllerId];
+          if (targetWs) {
+            targetWs.send(
+              osc.writePacket({
+                address: oscMsg.address,
+                args: oscMsg.args.slice(1),
+              }),
+            );
+          }
+          // If it's a controller and not assigned yet, assign now that we know numNeurons
+          if (controllers[controllerId] && !controllerAssignment[controllerId]) {
+            const assigned = assignNeuronToController(controllerId);
+            if (assigned) notifyAssignment(controllerId);
+          }
+        } else {
+          // Other /server/* messages - broadcast to all clients
+          for (let controller of Object.keys(controllers)) {
+            controllers[controller].send(osc.writePacket(oscMsg));
+          }
+          for (let admin of Object.keys(adminPanels)) {
+            adminPanels[admin].send(osc.writePacket(oscMsg));
+          }
         }
         break;
       case "update":
-        console.log("update", oscMsg);
+      case "client":
+        console.log(addressParts[1] === "client" ? "client" : "update", oscMsg);
         // Send the update to the simulation
         controllerId = controllerWs2Id(ws);
         const updateAdminId = adminWs2Id(ws);
@@ -431,64 +470,66 @@ wss.on("connection", (ws) => {
         if (simulationWs == null) return; // no simulation is registered
         simulationWs.send(osc.writePacket(oscMsg));
         
-        // Forward dc updates to external OSC
-        if (oscUdpPort && oscMsg.address.includes("/dc")) {
+        // Forward dc/neuron updates to external OSC (convert /client/neuron to /dc for compatibility)
+        if (oscUdpPort && (oscMsg.address.includes("/dc") || oscMsg.address.includes("/neuron"))) {
           try {
-            console.log(`[OSC Forward] ${senderId || 'unknown'} -> ${config.oscForward.host}:${config.oscForward.port} | ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
-            oscUdpPort.send(oscMsg);
+            let forwardMsg = oscMsg;
+            if (oscMsg.address.includes("/neuron")) {
+              forwardMsg = {
+                address: "/dc",
+                args: oscMsg.args
+              };
+            }
+            console.log(`[OSC Forward] ${senderId || 'unknown'} -> ${config.oscForward.host}:${config.oscForward.port} | ${forwardMsg.address} ${JSON.stringify(forwardMsg.args)}`);
+            oscUdpPort.send(forwardMsg);
           } catch (e) {
             console.error("Error forwarding OSC message:", e);
           }
         }
         
-        // Send the update to all other controllers
+        // Convert /client/* to /server/* for broadcast
+        let broadcastMsg = oscMsg;
+        if (oscMsg.address.startsWith("/client/")) {
+          broadcastMsg = {
+            address: oscMsg.address.replace("/client/", "/server/"),
+            args: oscMsg.args
+          };
+        }
+        
+        // Broadcast to all other controllers
         for (let controller of Object.keys(controllers)) {
           if (controller == senderId) continue;
-          controllers[controller].send(osc.writePacket(oscMsg));
+          controllers[controller].send(osc.writePacket(broadcastMsg));
         }
-        // Send the update to all admin panels
+        // Broadcast to all admin panels
         for (let admin of Object.keys(adminPanels)) {
           if (admin == senderId) continue;
-          adminPanels[admin].send(osc.writePacket(oscMsg));
+          adminPanels[admin].send(osc.writePacket(broadcastMsg));
         }
         break;
       case "pulse":
-        console.log("pulse", oscMsg);
-        // Forward pulse to simulation and other controllers (same as update)
-        controllerId = controllerWs2Id(ws);
-        const pulseAdminId = adminWs2Id(ws);
-        const pulseSenderId = controllerId || pulseAdminId;
-        if (simulationWs == null) return; // no simulation is registered
-        simulationWs.send(osc.writePacket(oscMsg));
-        
-        // Forward pulse to external OSC
-        if (oscUdpPort) {
-          try {
-            console.log(`[OSC Forward] ${pulseSenderId || 'unknown'} -> ${config.oscForward.host}:${config.oscForward.port} | ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
-            oscUdpPort.send(oscMsg);
-          } catch (e) {
-            console.error("Error forwarding pulse message:", e);
+        // Handle /pulse messages - only forward to external OSC, don't broadcast to clients
+        // (clients now receive /server/spike/{id} instead)
+        if (ws === simulationWs) {
+          // Already forwarded above in the early check, nothing more to do
+          console.log("Simulation pulse forwarded to external OSC only");
+        } else {
+          // If pulse comes from controller/admin, forward to simulation and external OSC
+          controllerId = controllerWs2Id(ws);
+          const pulseAdminId = adminWs2Id(ws);
+          const pulseSenderId = controllerId || pulseAdminId;
+          if (simulationWs) {
+            simulationWs.send(osc.writePacket(oscMsg));
           }
-        }
-        
-        for (let controller of Object.keys(controllers)) {
-          if (controller == pulseSenderId) continue;
-          controllers[controller].send(osc.writePacket(oscMsg));
-        }
-        for (let admin of Object.keys(adminPanels)) {
-          if (admin == pulseSenderId) continue;
-          adminPanels[admin].send(osc.writePacket(oscMsg));
-        }
-        break;
-        if (simulationWs == null) return; // no simulation is registered
-        simulationWs.send(osc.writePacket(oscMsg));
-        for (let controller of Object.keys(controllers)) {
-          if (controller == pulseSenderId) continue;
-          controllers[controller].send(osc.writePacket(oscMsg));
-        }
-        for (let admin of Object.keys(adminPanels)) {
-          if (admin == pulseSenderId) continue;
-          adminPanels[admin].send(osc.writePacket(oscMsg));
+          // Forward to external OSC
+          if (oscUdpPort) {
+            try {
+              console.log(`[OSC Forward] ${pulseSenderId || 'unknown'} -> ${config.oscForward.host}:${config.oscForward.port} | ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
+              oscUdpPort.send(oscMsg);
+            } catch (e) {
+              console.error("Error forwarding pulse message:", e);
+            }
+          }
         }
         break;
     }

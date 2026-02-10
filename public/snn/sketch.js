@@ -94,217 +94,276 @@ let oscWebSocket;
 
 function parseOscMessage(oscMsg) {
   const addressParts = oscMsg.address.split("/");
-  switch (addressParts[1]) {
-    case "update":
-      if (addressParts[2] === "dc") {
-        const id = oscMsg.args?.[0]?.value;
-        const value = oscMsg.args?.[1]?.value;
-        if (typeof id === "number" && typeof value === "number") {
-          settings["dc " + id] = value;
-        }
-      } else {
-        const setting = addressParts[2];
-        const value = oscMsg.args[0].value;
-        
-        // Debug logging for syn type messages
-        if (setting.includes("syn type")) {
-          console.log(`Received OSC: address="${oscMsg.address}", setting="${setting}", value=${value}`);
-        }
-        
-        // Handle spike trigger
-        if (/^spike \d+$/.test(setting) && value) {
-          const neuronId = parseInt(setting.split(" ")[1], 10);
-          const neuron = NN?.neurons?.[neuronId - 1];
-          if (neuron) {
-            neuron.V = neuron.maxV + 1;
-          }
-          break;
-        }
-        
-        // Handle syn type per neuron
-        if (/^syn type \d+$/.test(setting)) {
-          const neuronId = parseInt(setting.split(" ")[2], 10);
-          const neuron = NN?.neurons?.[neuronId - 1];
-          console.log(`Received syn type update: setting="${setting}", neuronId=${neuronId}, value=${value}, neuron exists=${!!neuron}`);
-          if (neuron) {
-            const oldType = neuron.syn_type;
-            neuron.syn_type = value >= 0 ? 1 : -1;
-            console.log(`Set neuron ${neuronId} syn_type from ${oldType} to ${neuron.syn_type} (value: ${value})`);
-            
-            // Update circle color
-            if (circles && circles[neuronId - 1]) {
-              circles[neuronId - 1].color = syn_colors[neuron.syn_type];
-            }
-            
-            // Update all pulses from this neuron
-            for (let k = 0; k < NN.synapses.length; k++) {
-              if (NN.synapses[k].from.id === neuronId - 1) {
-                pulses[k].set_syn_type(neuron.syn_type);
-              }
-            }
-          }
-          break;
-        }
-        
-        // Handle weight updates
-        if (/^weight \d+ \d+$/.test(setting)) {
-          const parts = setting.split(" ");
-          const fromId = parseInt(parts[1], 10) - 1;
-          const toId = parseInt(parts[2], 10) - 1;
-          for (let k = 0; k < NN.synapses.length; k++) {
-            const S = NN.synapses[k];
-            if (S.from.id === fromId && S.to.id === toId) {
-              S.set_weight(value);
-              if (nodeCon && nodeCon[k]) {
-                nodeCon[k][2] = value;
-              }
-              if (knobs && knobs[k]) {
-                knobs[k].set_value(map(value, 0, maxWeight, 0, 1));
-              }
-              break;
-            }
-          }
-          break;
-        }
-        
-        // Handle drop updates
-        if (/^drop \d+ \d+$/.test(setting)) {
-          const parts = setting.split(" ");
-          const fromId = parseInt(parts[1], 10) - 1;
-          const toId = parseInt(parts[2], 10) - 1;
-          for (let k = 0; k < NN.synapses.length; k++) {
-            const S = NN.synapses[k];
-            if (S.from.id === fromId && S.to.id === toId) {
-              S.drop = value >= 0.5;
-              break;
-            }
-          }
-          break;
-        }
-        
-        // Handle weight mean/size - regenerate all weights
-        if (setting === "weight mean" || setting === "weight size") {
-          settings[setting] = value;
-          NN.set_random_weight(settings["weight mean"], settings["weight size"]);
-          weights_to_nodes(true);
-          broadcastWeights();
-          break;
-        }
-        
-        // Handle delay mean/size - regenerate all delays
-        if (setting === "delay mean" || setting === "delay size") {
-          settings[setting] = value;
-          NN.set_random_delay(settings["delay mean"], settings["delay size"]);
-          delay_to_pulses();
-          break;
-        }
-        
-        // Handle syn type proportion
-        if (setting === "syn type") {
-          settings[setting] = value;
-          NN.set_type_proportion(value);
-          console.log(`Set syn type proportion to ${value}`);
-          broadcastSynTypes();
-          break;
-        }
-        
-        // Handle force updates
-        if (setting === "pulse force") {
-          settings[setting] = value;
-          break;
-        }
-        if (setting === "gravity force") {
-          gravityConstant = value;
-          settings[setting] = value;
-          break;
-        }
-        if (setting === "repel force") {
-          forceConstantRepulsive = value;
-          settings[setting] = value;
-          break;
-        }
-        if (setting === "attract force") {
-          forceConstantAttractive = value;
-          settings[setting] = value;
-          break;
-        }
-        
-        // Handle audio controls
-        if (setting === "audio volume") {
-          settings[setting] = value;
-          if (typeof Tone !== "undefined" && Tone.Destination) {
-            Tone.Destination.volume.value = value;
-          }
-          break;
-        }
-        if (setting === "audio mute") {
-          settings[setting] = value;
-          if (typeof Tone !== "undefined" && Tone.Destination) {
-            Tone.Destination.mute = value > 0.5;
-          }
-          break;
-        }
-        
-        // Handle show scopes toggle
-        if (setting === "show scopes") {
-          settings[setting] = value;
-          showScopes = value > 0.5;
-          createScopes();
-          updateNetLayout();
-          break;
-        }
-        
-        settings[setting] = value;
+  const prefix = addressParts[1]; // "update", "client", "getState", etc.
+  
+  // Handle getState requests
+  if (prefix === "getState") {
+    const controllerId = oscMsg.args[0].value;
+    
+    // Send DC values for all neurons in correct order
+    let values = [];
+    if (NN && NN.neurons) {
+      for (let i = 0; i < NN.neurons.length; i++) {
+        const dcValue = settings["dc " + (i + 1)] || 0;
+        values.push({
+          type: "f",
+          value: dcValue,
+        });
       }
-      break;
-    case "getState":
-      const controllerId = oscMsg.args[0].value;
-      
-      // Send DC values for all neurons
-      let values = [];
-      for (const setting in settings) {
-        if (/^dc \d+$/.test(setting)) {
-          values.push({
-            type: "f",
-            value: settings[setting],
+    }
+    oscWebSocket.send({
+      address: "/server/neurons/dc",
+      args: [
+        {
+          type: "s",
+          value: controllerId,
+        },
+        ...values,
+      ],
+    });
+    
+    // If admin panel is connecting, also send all weights and syn types
+    if (controllerId.startsWith('admin-')) {
+      // Send all syn types
+      if (NN && NN.neurons) {
+        for (let i = 0; i < NN.neurons.length; i++) {
+          oscWebSocket.send({
+            address: `/server/syntype/${i + 1}`,
+            args: [{ type: "f", value: NN.neurons[i].syn_type }],
           });
         }
       }
-      oscWebSocket.send({
-        address: "/state/neurons",
-        args: [
-          {
-            type: "s",
-            value: controllerId,
-          },
-          ...values,
-        ],
-      });
       
-      // If admin panel is connecting, also send all weights and syn types
-      if (controllerId.startsWith('admin-')) {
-        // Send all syn types
-        if (NN && NN.neurons) {
-          for (let i = 0; i < NN.neurons.length; i++) {
-            oscWebSocket.send({
-              address: `/update/syn type ${i + 1}`,
-              args: [{ type: "f", value: NN.neurons[i].syn_type }],
-            });
+      // Send all weights
+      if (NN && NN.synapses) {
+        for (let k = 0; k < NN.synapses.length; k++) {
+          const S = NN.synapses[k];
+          oscWebSocket.send({
+            address: `/server/weight/${S.from.id + 1}/${S.to.id + 1}`,
+            args: [{ type: "f", value: S.weight }],
+          });
+        }
+      }
+    }
+    return;
+  }
+  
+  // Handle both old /update/* and new /client/* formats
+  if (prefix === "update" || prefix === "client") {
+    // Check for path-based /client/{resource}/{id} format
+    if (prefix === "client" && addressParts.length >= 3) {
+      const resource = addressParts[2]; // "syntype", "weight", "drop", "neuron", "spike"
+      const value = oscMsg.args[0].value;
+      
+      // Handle /client/syntype/{id}
+      if (resource === "syntype" && addressParts[3]) {
+        const neuronId = parseInt(addressParts[3], 10);
+        const neuron = NN?.neurons?.[neuronId - 1];
+        if (neuron) {
+          neuron.syn_type = value >= 0 ? 1 : -1;
+          if (circles && circles[neuronId - 1]) {
+            circles[neuronId - 1].color = syn_colors[neuron.syn_type];
+          }
+          for (let k = 0; k < NN.synapses.length; k++) {
+            if (NN.synapses[k].from.id === neuronId - 1) {
+              pulses[k].set_syn_type(neuron.syn_type);
+            }
           }
         }
+        return;
+      }
+      
+      // Handle /client/weight/{from}/{to}
+      if (resource === "weight" && addressParts[3] && addressParts[4]) {
+        const fromId = parseInt(addressParts[3], 10) - 1;
+        const toId = parseInt(addressParts[4], 10) - 1;
+        for (let k = 0; k < NN.synapses.length; k++) {
+          const S = NN.synapses[k];
+          if (S.from.id === fromId && S.to.id === toId) {
+            S.set_weight(value);
+            if (nodeCon && nodeCon[k]) {
+              nodeCon[k][2] = value;
+            }
+            if (knobs && knobs[k]) {
+              knobs[k].set_value(map(value, 0, maxWeight, 0, 1));
+            }
+            break;
+          }
+        }
+        return;
+      }
+      
+      // Handle /client/drop/{from}/{to}
+      if (resource === "drop" && addressParts[3] && addressParts[4]) {
+        const fromId = parseInt(addressParts[3], 10) - 1;
+        const toId = parseInt(addressParts[4], 10) - 1;
+        for (let k = 0; k < NN.synapses.length; k++) {
+          const S = NN.synapses[k];
+          if (S.from.id === fromId && S.to.id === toId) {
+            S.drop = value >= 0.5;
+            break;
+          }
+        }
+        return;
+      }
+    }
+    
+    const setting = addressParts[2];
+    
+    // Handle DC updates in two formats: /update/dc or /client/neuron
+    if (setting === "dc" || setting === "neuron") {
+      const id = oscMsg.args?.[0]?.value;
+      const value = oscMsg.args?.[1]?.value;
+      if (typeof id === "number" && typeof value === "number") {
+        settings["dc " + id] = value;
+      }
+      return;
+    }
+    
+    const value = oscMsg.args[0].value;
+    
+    // Handle spike trigger
+    if (/^spike \d+$/.test(setting) && value) {
+      const neuronId = parseInt(setting.split(" ")[1], 10);
+      const neuron = NN?.neurons?.[neuronId - 1];
+      if (neuron) {
+        neuron.V = neuron.maxV + 1;
+      }
+      return;
+    }
+    
+    // Handle syn type per neuron
+    if (/^syn type \d+$/.test(setting)) {
+      const neuronId = parseInt(setting.split(" ")[2], 10);
+      const neuron = NN?.neurons?.[neuronId - 1];
+      if (neuron) {
+        neuron.syn_type = value >= 0 ? 1 : -1;
         
-        // Send all weights
-        if (NN && NN.synapses) {
-          for (let k = 0; k < NN.synapses.length; k++) {
-            const S = NN.synapses[k];
-            oscWebSocket.send({
-              address: `/update/weight ${S.from.id + 1} ${S.to.id + 1}`,
-              args: [{ type: "f", value: S.weight }],
-            });
+        // Update circle color
+        if (circles && circles[neuronId - 1]) {
+          circles[neuronId - 1].color = syn_colors[neuron.syn_type];
+        }
+        
+        // Update all pulses from this neuron
+        for (let k = 0; k < NN.synapses.length; k++) {
+          if (NN.synapses[k].from.id === neuronId - 1) {
+            pulses[k].set_syn_type(neuron.syn_type);
           }
         }
       }
-      break;
+      return;
+    }
+    
+    // Handle weight updates
+    if (/^weight \d+ \d+$/.test(setting)) {
+      const parts = setting.split(" ");
+      const fromId = parseInt(parts[1], 10) - 1;
+      const toId = parseInt(parts[2], 10) - 1;
+      for (let k = 0; k < NN.synapses.length; k++) {
+        const S = NN.synapses[k];
+        if (S.from.id === fromId && S.to.id === toId) {
+          S.set_weight(value);
+          if (nodeCon && nodeCon[k]) {
+            nodeCon[k][2] = value;
+          }
+          if (knobs && knobs[k]) {
+            knobs[k].set_value(map(value, 0, maxWeight, 0, 1));
+          }
+          break;
+        }
+      }
+      return;
+    }
+    
+    // Handle drop updates
+    if (/^drop \d+ \d+$/.test(setting)) {
+      const parts = setting.split(" ");
+      const fromId = parseInt(parts[1], 10) - 1;
+      const toId = parseInt(parts[2], 10) - 1;
+      for (let k = 0; k < NN.synapses.length; k++) {
+        const S = NN.synapses[k];
+        if (S.from.id === fromId && S.to.id === toId) {
+          S.drop = value >= 0.5;
+          break;
+        }
+      }
+      return;
+    }
+    
+    // Handle weight mean/size - regenerate all weights
+    if (setting === "weight mean" || setting === "weight size") {
+      settings[setting] = value;
+      NN.set_random_weight(settings["weight mean"], settings["weight size"]);
+      weights_to_nodes(true);
+      broadcastWeights();
+      return;
+    }
+    
+    // Handle delay mean/size - regenerate all delays
+    if (setting === "delay mean" || setting === "delay size") {
+      settings[setting] = value;
+      NN.set_random_delay(settings["delay mean"], settings["delay size"]);
+      delay_to_pulses();
+      return;
+    }
+    
+    // Handle syn type proportion
+    if (setting === "syn type") {
+      settings[setting] = value;
+      NN.set_type_proportion(value);
+      broadcastSynTypes();
+      return;
+    }
+    
+    // Handle force updates
+    if (setting === "pulse force") {
+      settings[setting] = value;
+      return;
+    }
+    if (setting === "gravity force") {
+      gravityConstant = value;
+      settings[setting] = value;
+      return;
+    }
+    if (setting === "repel force") {
+      forceConstantRepulsive = value;
+      settings[setting] = value;
+      return;
+    }
+    if (setting === "attract force") {
+      forceConstantAttractive = value;
+      settings[setting] = value;
+      return;
+    }
+    
+    // Handle audio controls
+    if (setting === "audio volume") {
+      settings[setting] = value;
+      if (typeof Tone !== "undefined" && Tone.Destination) {
+        Tone.Destination.volume.value = value;
+      }
+      return;
+    }
+    if (setting === "audio mute") {
+      settings[setting] = value;
+      if (typeof Tone !== "undefined" && Tone.Destination) {
+        Tone.Destination.mute = value > 0.5;
+      }
+      return;
+    }
+    
+    // Handle show scopes toggle
+    if (setting === "show scopes") {
+      settings[setting] = value;
+      showScopes = value > 0.5;
+      createScopes();
+      updateNetLayout();
+      return;
+    }
+    
+    // Default: store the setting
+    settings[setting] = value;
+    return;
   }
 }
 
@@ -394,11 +453,17 @@ function createCircles() {
     let voice = new Voice(nota, 1 / 16, casio);
     NN.neurons[i].set_event_callback(function () {
       voice.trigger();
-      // Send OSC pulse message when neuron spikes
+      // Send OSC messages when neuron spikes
       if (oscWebSocket) {
+        // Send /pulse for external OSC forwarding
         oscWebSocket.send({
           address: `/pulse`,
-          args: [{ type: "i", value: i + 1 }] // Send 1-based neuron ID
+          args: [{ type: "i", value: i + 1 }]
+        });
+        // Send /server/spike to all connected clients
+        oscWebSocket.send({
+          address: `/server/spike/${i + 1}`,
+          args: []
         });
       }
     });
@@ -608,7 +673,7 @@ function broadcastWeights() {
   for (let k = 0; k < NN.synapses.length; k++) {
     const S = NN.synapses[k];
     oscWebSocket.send({
-      address: `/update/weight ${S.from.id + 1} ${S.to.id + 1}`,
+      address: `/server/weight/${S.from.id + 1}/${S.to.id + 1}`,
       args: [{ type: "f", value: S.weight }],
     });
   }
@@ -619,7 +684,7 @@ function broadcastSynTypes() {
   for (let i = 0; i < NN.neurons.length; i++) {
     const neuron = NN.neurons[i];
     oscWebSocket.send({
-      address: `/update/syn type ${neuron.id + 1}`,
+      address: `/server/syntype/${neuron.id + 1}`,
       args: [{ type: "f", value: neuron.syn_type }],
     });
   }

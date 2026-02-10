@@ -4,7 +4,7 @@
   "wsPort": 9000,
   "wsUrl": "ws://localhost:9000",
   "oscForward": {
-    "host": "127.0.0.1",
+    "host": "192.168.1.255",
     "port": 57120
   }
 }

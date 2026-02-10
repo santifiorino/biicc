@@ -113,9 +113,9 @@ function parseOscMessage(oscMsg) {
             handleDisconnect(message);
             break;
         }
-        case "update": {
-            // Handle dc updates in the format /update/dc with args [id, value]
-            if (addressParts[2] === "dc") {
+        case "server": {
+            // Handle /server/neuron (single neuron DC update)
+            if (addressParts[2] === "neuron") {
                 const id = oscMsg.args?.[0]?.value;
                 const value = oscMsg.args?.[1]?.value;
                 if (typeof id === "number" && typeof value === "number") {
@@ -128,7 +128,59 @@ function parseOscMessage(oscMsg) {
                 break;
             }
             
+            // Handle /server/neurons/dc (initial state)
+            if (addressParts[2] === "neurons" && addressParts[3] === "dc") {
+                // args[0] is controllerId string, rest are DC values
+                for (let i = 1; i < oscMsg.args.length; i++) {
+                    settings["dc " + i] = oscMsg.args[i].value;
+                }
+                neuronsAmount = oscMsg.args.length;
+                createAdminControls();
+                // Update existing sliders if they were already created
+                for (let i = 1; i < oscMsg.args.length; i++) {
+                    const slider = adminSliders.find((s) => s.neuronId === i);
+                    if (slider) {
+                        slider.value = oscMsg.args[i].value;
+                    }
+                }
+                break;
+            }
+            
+            // Handle /server/syntype/{id}
+            if (addressParts[2] === "syntype") {
+                const neuronId = parseInt(addressParts[3], 10);
+                const value = oscMsg.args[0].value;
+                pendingSynTypes[neuronId] = value >= 0 ? 1 : -1;
+                const toggle = adminToggles.find((t) => t.neuronId === neuronId);
+                if (toggle) {
+                    toggle.value = value >= 0 ? 1 : -1;
+                }
+                break;
+            }
+            
+            // Handle /server/weight/{from}/{to}
+            if (addressParts[2] === "weight") {
+                const fromId = parseInt(addressParts[3], 10);
+                const toId = parseInt(addressParts[4], 10);
+                const weightValue = oscMsg.args[0].value;
+                pendingWeights[`${fromId}-${toId}`] = weightValue;
+                // Immediately update knob if it exists
+                const knob = adminKnobs.find((k) => k.fromId === fromId && k.toId === toId);
+                if (knob) {
+                    knob.value = constrain(weightValue / maxWeight, 0, 1);
+                }
+                break;
+            }
+            
             const neuronName = addressParts[2];
+            if (/^dc \d+$/.test(neuronName)) {
+                const neuronId = parseInt(neuronName.split(" ")[1], 10);
+                const slider = adminSliders.find((s) => s.neuronId === neuronId);
+                if (slider) {
+                    slider.value = oscMsg.args[0].value;
+                }
+            }
+            // Legacy format support for old messages
             if (/^dc \d+$/.test(neuronName)) {
                 const neuronId = parseInt(neuronName.split(" ")[1], 10);
                 const slider = adminSliders.find((s) => s.neuronId === neuronId);
@@ -173,38 +225,6 @@ function parseOscMessage(oscMsg) {
             }
             if (neuronName === "show scopes") {
                 settings[neuronName] = oscMsg.args[0].value;
-            }
-            if (/^syn type \d+$/.test(neuronName)) {
-                const neuronId = parseInt(neuronName.split(" ")[2], 10);
-                // Store for later if UI not ready
-                pendingSynTypes[neuronId] = oscMsg.args[0].value >= 0 ? 1 : -1;
-                // Update immediately if toggle exists
-                const toggle = adminToggles.find((t) => t.neuronId === neuronId);
-                if (toggle) {
-                    toggle.value = oscMsg.args[0].value >= 0 ? 1 : -1;
-                }
-            }
-            if (/^weight \d+ \d+$/.test(neuronName)) {
-                const parts = neuronName.split(" ");
-                const fromId = parseInt(parts[1], 10);
-                const toId = parseInt(parts[2], 10);
-                const weightValue = oscMsg.args[0].value;
-                // Store for later if UI not ready
-                pendingWeights[`${fromId}-${toId}`] = weightValue;
-                // Update immediately if knob exists
-                const knob = adminKnobs.find((k) => k.fromId === fromId && k.toId === toId);
-                if (knob) {
-                    knob.value = constrain(weightValue / maxWeight, 0, 1);
-                }
-            }
-            if (/^drop \d+ \d+$/.test(neuronName)) {
-                const parts = neuronName.split(" ");
-                const fromId = parseInt(parts[1], 10);
-                const toId = parseInt(parts[2], 10);
-                const knob = adminKnobs.find((k) => k.fromId === fromId && k.toId === toId);
-                if (knob) {
-                    knob.drop = oscMsg.args[0].value >= 0.5;
-                }
             }
             break;
         }
@@ -273,9 +293,13 @@ function applyPendingState() {
         }
     }
     
-    // Clear pending data
-    pendingSynTypes = {};
-    pendingWeights = {};
+    // Also ensure DC sliders match what's in settings (in case of any mismatch)
+    for (const slider of adminSliders) {
+        const settingValue = settings["dc " + slider.neuronId];
+        if (settingValue !== undefined) {
+            slider.value = settingValue;
+        }
+    }
 }
 
 function getAdminPanels() {
@@ -616,6 +640,8 @@ function downloadJson(baseName, payload) {
 }
 
 function setAllKnobsValue(val) {
+    // Clear pending weights to avoid conflict with user action
+    pendingWeights = {};
     for (const knob of adminKnobs) {
         knob.value = val;
         updateSetting(`weight ${knob.fromId} ${knob.toId}`, knob.value * maxWeight);
@@ -623,6 +649,8 @@ function setAllKnobsValue(val) {
 }
 
 function setAllKnobsRandom() {
+    // Clear pending weights to avoid conflict with user action
+    pendingWeights = {};
     for (const knob of adminKnobs) {
         knob.value = random();
         updateSetting(`weight ${knob.fromId} ${knob.toId}`, knob.value * maxWeight);
@@ -731,6 +759,8 @@ function drawPanels() {
 function connectToSimulation() {
     settings = {};
     neuronsAmount = 0;
+    pendingWeights = {};
+    pendingSynTypes = {};
     const oscMessage = {
         address: "/connectAdmin",
         args: [
@@ -741,31 +771,75 @@ function connectToSimulation() {
         ],
     };
     oscWebSocket.send(oscMessage);
+    
+    // Request current state from simulation
+    const getStateMessage = {
+        address: "/getState",
+        args: [
+            {
+                type: "s",
+                value: `admin-${controllerId}`,
+            },
+        ],
+    };
+    oscWebSocket.send(getStateMessage);
 }
 
 function updateSetting(setting, value) {
     settings[setting] = value;
     let oscMessage;
     
-    // Handle dc updates with the same format as regular controllers
+    // Handle dc updates: /client/neuron with [id, value]
     if (/^dc \d+$/.test(setting)) {
         const id = parseInt(setting.split(" ")[1], 10);
         oscMessage = {
-            address: "/update/dc",
+            address: "/client/neuron",
             args: [
                 { type: "i", value: id },
                 { type: "f", value: value },
             ],
         };
-    } else {
+    } 
+    // Handle syn type per neuron: /client/syntype/{id}
+    else if (/^syn type \d+$/.test(setting)) {
+        const id = parseInt(setting.split(" ")[2], 10);
         oscMessage = {
-            address: "/update/" + setting,
-            args: [
-                {
-                    type: "f",
-                    value: value,
-                },
-            ],
+            address: `/client/syntype/${id}`,
+            args: [{ type: "f", value: value }],
+        };
+    }
+    // Handle weights: /client/weight/{from}/{to}
+    else if (/^weight \d+ \d+$/.test(setting)) {
+        const parts = setting.split(" ");
+        const from = parseInt(parts[1], 10);
+        const to = parseInt(parts[2], 10);
+        oscMessage = {
+            address: `/client/weight/${from}/${to}`,
+            args: [{ type: "f", value: value }],
+        };
+    }
+    // Handle drops: /client/drop/{from}/{to}
+    else if (/^drop \d+ \d+$/.test(setting)) {
+        const parts = setting.split(" ");
+        const from = parseInt(parts[1], 10);
+        const to = parseInt(parts[2], 10);
+        oscMessage = {
+            address: `/client/drop/${from}/${to}`,
+            args: [{ type: "f", value: value }],
+        };
+    }
+    // Handle spikes: /client/spike with space in address
+    else if (/^spike \d+$/.test(setting)) {
+        oscMessage = {
+            address: `/client/${setting}`,
+            args: [{ type: "f", value: value }],
+        };
+    }
+    // All other settings: /client/{setting}
+    else {
+        oscMessage = {
+            address: "/client/" + setting.replace(/\s+/g, " "),
+            args: [{ type: "f", value: value }],
         };
     }
     

@@ -317,14 +317,14 @@
                     to: 'Server'
                 },
                 {
-                    address: '/update/dc <n>',
+                    address: '/client/neuron',
                     description: 'Update DC input current for assigned neuron',
                     args: '[i: neuronId, f: value]',
                     from: 'Controller',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/spike <n>',
+                    address: '/client/spike <n>',
                     description: 'Manual trigger spike in assigned neuron',
                     args: '[f: value (1 = spike)]',
                     from: 'Controller',
@@ -340,119 +340,126 @@
                     to: 'Server'
                 },
                 {
-                    address: '/update/spike <n>',
+                    address: '/getState',
+                    description: 'Request current simulation state',
+                    args: '[s: admin-{id}]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/client/neuron',
+                    description: 'Update DC input current for any neuron',
+                    args: '[i: neuronId, f: value]',
+                    from: 'Admin Panel',
+                    to: 'Simulation'
+                },
+                {
+                    address: '/client/spike <n>',
                     description: 'Trigger spike in any neuron',
                     args: '[f: value (1 = spike)]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/syn type <n>',
-                    description: 'Set neuron n type (Excitatory/Inhibitory)',
+                    address: '/client/syntype/{id}',
+                    description: 'Set neuron type (Excitatory/Inhibitory)',
                     args: '[f: value (1=E, -1=I)]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/syn type',
+                    address: '/client/syn type',
                     description: 'Set E/I proportion for all neurons',
                     args: '[f: proportion (0-1)]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/weight <from> <to>',
-                    description: 'Set synapse weight',
+                    address: '/client/weight/{from}/{to}',
+                    description: 'Set individual synapse weight',
                     args: '[f: weight]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/drop <from> <to>',
+                    address: '/client/drop/{from}/{to}',
                     description: 'Set synapse drop state',
                     args: '[f: dropped (0=active, 1=dropped)]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/weight mean',
+                    address: '/client/weight mean',
                     description: 'Regenerate all weights with new mean',
                     args: '[f: mean]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/weight size',
+                    address: '/client/weight size',
                     description: 'Set weight distribution size',
                     args: '[f: size]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/delay mean',
+                    address: '/client/delay mean',
                     description: 'Regenerate all delays with new mean',
                     args: '[f: mean]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/delay size',
+                    address: '/client/delay size',
                     description: 'Set delay distribution size',
                     args: '[f: size]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/dropout',
-                    description: 'Set synapse dropout probability',
-                    args: '[f: probability (0-1)]',
-                    from: 'Admin Panel',
-                    to: 'Simulation'
-                },
-                {
-                    address: '/update/pulse force',
+                    address: '/client/pulse force',
                     description: 'Set impulse force for physics',
                     args: '[f: force]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/gravity force',
+                    address: '/client/gravity force',
                     description: 'Set gravity force constant',
                     args: '[f: force]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/repel force',
+                    address: '/client/repel force',
                     description: 'Set repulsive force between nodes',
                     args: '[f: force]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/attract force',
+                    address: '/client/attract force',
                     description: 'Set attractive force constant',
                     args: '[f: force]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/audio volume',
+                    address: '/client/audio volume',
                     description: 'Set Tone.js master volume',
                     args: '[f: dB (-60 to 0)]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/audio mute',
+                    address: '/client/audio mute',
                     description: 'Mute/unmute audio',
                     args: '[f: muted (0=unmuted, 1=muted)]',
                     from: 'Admin Panel',
                     to: 'Simulation'
                 },
                 {
-                    address: '/update/show scopes',
+                    address: '/client/show scopes',
                     description: 'Toggle scopes/scores display',
                     args: '[f: show (0=hidden, 1=visible)]',
                     from: 'Admin Panel',
@@ -461,11 +468,39 @@
             ],
             simToClients: [
                 {
-                    address: '/state/neurons',
-                    description: 'Full neuron DC state sent on controller connection',
+                    address: '/server/neurons/dc',
+                    description: 'Full neuron DC state (initial state delivery)',
                     args: '[s: controllerId, f: dc1, f: dc2, ...]',
                     from: 'Simulation',
-                    to: 'Controller'
+                    to: 'Controller/Admin'
+                },
+                {
+                    address: '/server/neuron',
+                    description: 'Single neuron DC update (real-time sync)',
+                    args: '[i: neuronId, f: value]',
+                    from: 'Simulation',
+                    to: 'All Clients'
+                },
+                {
+                    address: '/server/syntype/{id}',
+                    description: 'Neuron type update (E/I)',
+                    args: '[f: value (1=E, -1=I)]',
+                    from: 'Simulation',
+                    to: 'All Clients'
+                },
+                {
+                    address: '/server/weight/{from}/{to}',
+                    description: 'Synapse weight update',
+                    args: '[f: weight]',
+                    from: 'Simulation',
+                    to: 'All Clients'
+                },
+                {
+                    address: '/server/spike/{id}',
+                    description: 'Neuron spike event notification',
+                    args: '[]',
+                    from: 'Simulation',
+                    to: 'All Clients'
                 },
                 {
                     address: '/assignment/neuron',
@@ -487,19 +522,33 @@
                     args: '[s: clientId]',
                     from: 'Server',
                     to: 'Monitor'
+                },
+                {
+                    address: '/clientDisconnected',
+                    description: 'Client disconnect notification',
+                    args: '[s: clientId]',
+                    from: 'Server',
+                    to: 'Monitor'
                 }
             ],
             serverBroadcast: [
                 {
-                    address: '/update/*',
-                    description: 'ALL control messages are broadcast by server to sync state',
+                    address: '/server/*',
+                    description: 'ALL /server/* messages are broadcast to sync state across clients',
                     args: '[varies by message type]',
                     from: 'Server',
                     to: 'All Clients (except sender)'
                 },
                 {
+                    address: 'Note:',
+                    description: 'The server converts /client/* to /server/* before broadcasting',
+                    args: '',
+                    from: '',
+                    to: ''
+                },
+                {
                     address: 'Examples:',
-                    description: '/update/dc, /update/weight, /update/spike, /update/pulse force, /update/gravity force, /update/audio volume, etc.',
+                    description: '/server/neuron, /server/weight/{f}/{t}, /server/syntype/{id}, etc.',
                     args: '',
                     from: '',
                     to: ''
@@ -514,10 +563,10 @@
                     to: 'External OSC (UDP)'
                 },
                 {
-                    address: '/update/dc <n>',
-                    description: 'DC changes from controllers',
+                    address: '/dc',
+                    description: 'DC changes from controllers/admin (converted from /client/neuron)',
                     args: '[i: neuronId, f: value]',
-                    from: 'Controller',
+                    from: 'Controller/Admin',
                     to: 'External OSC (UDP)'
                 }
             ]
