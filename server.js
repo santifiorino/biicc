@@ -5,33 +5,61 @@ const http = require("http"),
   fs = require("fs"),
   path = require("path");
 
+const { SimulationRunner } = require("./simulation/simulation");
+
 const app = express();
 const server = http.createServer(app);
 
 app.use(express.static("public"));
 
-// Parse CLI arguments
+// ── Parse CLI arguments ────────────────────────────────────────────────────
+
 const args = process.argv.slice(2);
 let cliHost = null;
+let cliStateFile = null;
+let cliNeurons = null;
+let cliAutosave = false;
+let cliAutosavePath = null;
+let cliAutosaveDelay = 750;
+
 for (let i = 0; i < args.length; i++) {
   if ((args[i] === "--ip" || args[i] === "--host") && args[i + 1]) {
     cliHost = args[i + 1];
     i++;
   }
+  if (args[i] === "--state" && args[i + 1]) {
+    cliStateFile = args[i + 1];
+    i++;
+  }
+  if (args[i] === "--neurons" && args[i + 1]) {
+    cliNeurons = parseInt(args[i + 1], 10);
+    i++;
+  }
+  if (args[i] === "--autosave") {
+    cliAutosave = true;
+  }
+  if (args[i] === "--autosave-path" && args[i + 1]) {
+    cliAutosavePath = args[i + 1];
+    i++;
+  }
+  if (args[i] === "--autosave-delay" && args[i + 1]) {
+    const parsedDelay = parseInt(args[i + 1], 10);
+    if (!Number.isNaN(parsedDelay) && parsedDelay >= 0) {
+      cliAutosaveDelay = parsedDelay;
+    }
+    i++;
+  }
 }
 
-// Load configuration
+// ── Load configuration ─────────────────────────────────────────────────────
+
 let config = { maxControllers: 4, wsUrl: "ws://localhost:9000" };
 try {
   const configPath = path.join(__dirname, "config.json");
   if (fs.existsSync(configPath)) {
     const raw = fs.readFileSync(configPath, "utf8");
     const parsed = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed.maxControllers === "number" &&
-      parsed.maxControllers > 0
-    ) {
+    if (parsed && typeof parsed.maxControllers === "number" && parsed.maxControllers > 0) {
       config.maxControllers = parsed.maxControllers;
     }
     if (parsed && typeof parsed.wsUrl === "string" && parsed.wsUrl.length > 0) {
@@ -46,19 +74,23 @@ try {
     if (parsed && typeof parsed.wsPort === "number") {
       config.wsPort = parsed.wsPort;
     }
+    if (parsed && typeof parsed.numNeurons === "number") {
+      config.numNeurons = parsed.numNeurons;
+    }
   }
 } catch (err) {
   console.warn("Could not read config.json, using defaults. Error:", err);
 }
 
-// Override wsUrl with CLI argument if provided
 if (cliHost) {
-  const wsPort = typeof config.wsPort === "number" && config.wsPort > 0 ? config.wsPort : 9000;
+  const wsPort =
+    typeof config.wsPort === "number" && config.wsPort > 0
+      ? config.wsPort
+      : 9000;
   config.wsUrl = `ws://${cliHost}:${wsPort}`;
   console.log(`Using CLI-provided host: ${config.wsUrl}`);
 }
 
-// Derive ports from config (fallbacks if not provided)
 const HTTP_PORT =
   typeof config.httpPort === "number" && config.httpPort > 0
     ? config.httpPort
@@ -66,88 +98,96 @@ const HTTP_PORT =
 const WS_PORT =
   typeof config.wsPort === "number" && config.wsPort > 0 ? config.wsPort : 9000;
 
+// ── Start HTTP server ──────────────────────────────────────────────────────
+
 server.listen(HTTP_PORT, () => {
-  console.log(`Server is running on http://localhost:${HTTP_PORT}`);
+  console.log(`HTTP server running on http://localhost:${HTTP_PORT}`);
 });
 
-// Setup OSC UDP client for forwarding messages
+// ── OSC UDP forwarding ─────────────────────────────────────────────────────
+
 let oscUdpPort = null;
 if (config.oscForward && config.oscForward.host && config.oscForward.port) {
   oscUdpPort = new osc.UDPPort({
     localAddress: "0.0.0.0",
-    localPort: 0, // Use any available port
+    localPort: 0,
     remoteAddress: config.oscForward.host,
     remotePort: config.oscForward.port,
-    metadata: true
+    metadata: true,
   });
-  
   oscUdpPort.open();
-  
   oscUdpPort.on("ready", () => {
-    console.log(`OSC forwarding to ${config.oscForward.host}:${config.oscForward.port}`);
+    console.log(
+      `OSC forwarding to ${config.oscForward.host}:${config.oscForward.port}`,
+    );
   });
-  
   oscUdpPort.on("error", (err) => {
     console.error("OSC UDP error:", err);
   });
 }
 
-let simulationWs = null;
-let controllers = {}; // { controllerId: controllerWs }
-let adminPanels = {}; // { adminId: adminWs }
-let monitorWs = null; // monitor WebSocket connection
-let clientActivity = {}; // { clientId: lastActivityTimestamp }
-// Assignment tracking
-let numNeurons = null; // learned from simulation state
-let neuronLoad = []; // length = numNeurons, counts of connected controllers
-let controllerAssignment = {}; // controllerId -> 1-based neuron index
+// ── Create & start the server-side simulation ──────────────────────────────
 
-function ensureNeuronCapacity(n) {
-  if (typeof n !== "number" || n <= 0) return;
-  if (numNeurons !== n) {
-    numNeurons = n;
-    const newLoad = new Array(numNeurons).fill(0);
-    // Recount from existing assignments to be safe
-    for (const cid of Object.keys(controllerAssignment)) {
-      const idx = controllerAssignment[cid];
-      if (idx >= 1 && idx <= numNeurons) {
-        newLoad[idx - 1] += 1;
-      }
+const numNeurons = cliNeurons || config.numNeurons || 12;
+const sim = new SimulationRunner({
+  numNeurons,
+  frameRate: 60,
+  stateFile: cliStateFile || null,
+});
+
+// ── Autosave (optional) ───────────────────────────────────────────────────
+
+const autosaveEnabled = cliAutosave;
+const autosavePath =
+  cliAutosavePath || path.join(__dirname, "state_dump.json");
+const autosaveDelay = cliAutosaveDelay;
+let autosaveTimer = null;
+
+function scheduleAutosave() {
+  if (!autosaveEnabled) return;
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    try {
+      sim.saveStateFile(autosavePath);
+    } catch (e) {
+      console.error("Autosave failed:", e.message);
     }
-    neuronLoad = newLoad;
-  } else if (neuronLoad.length !== numNeurons) {
-    neuronLoad = new Array(numNeurons).fill(0);
-    for (const cid of Object.keys(controllerAssignment)) {
-      const idx = controllerAssignment[cid];
-      if (idx >= 1 && idx <= numNeurons) {
-        neuronLoad[idx - 1] += 1;
-      }
-    }
-  }
+  }, autosaveDelay);
 }
+
+// ── Client tracking ────────────────────────────────────────────────────────
+
+let controllers = {}; // { controllerId: ws }
+let adminPanels = {}; // { adminId: ws }
+let visualClients = {}; // { visualId: ws }   (browser renderers)
+let monitorWs = null;
+let clientActivity = {};
+
+// ── Neuron assignment (for controllers) ────────────────────────────────────
+
+let neuronLoad = new Array(sim.numNeurons).fill(0);
+let controllerAssignment = {};
 
 function assignNeuronToController(controllerId) {
   if (!controllerId) return null;
   if (controllerAssignment[controllerId])
     return controllerAssignment[controllerId];
-  if (!numNeurons || numNeurons <= 0) return null; // wait until we know
-  if (!neuronLoad || neuronLoad.length !== numNeurons) {
-    neuronLoad = new Array(numNeurons).fill(0);
+  if (neuronLoad.length !== sim.numNeurons) {
+    neuronLoad = new Array(sim.numNeurons).fill(0);
   }
-  // Find smallest load, then smallest index among those
   let minLoad = Infinity;
-  for (let i = 0; i < numNeurons; i++) {
+  for (let i = 0; i < sim.numNeurons; i++) {
     if (neuronLoad[i] < minLoad) minLoad = neuronLoad[i];
   }
-  let chosen = 0; // 0-based
-  for (let i = 0; i < numNeurons; i++) {
+  let chosen = 0;
+  for (let i = 0; i < sim.numNeurons; i++) {
     if (neuronLoad[i] === minLoad) {
       chosen = i;
       break;
     }
   }
   neuronLoad[chosen] += 1;
-  const assigned = chosen + 1; // 1-based neuron numbering
+  const assigned = chosen + 1;
   controllerAssignment[controllerId] = assigned;
   return assigned;
 }
@@ -166,15 +206,113 @@ function notifyAssignment(controllerId) {
 
 function freeAssignmentFor(controllerId) {
   const assigned = controllerAssignment[controllerId];
-  if (assigned && neuronLoad && neuronLoad.length >= assigned) {
+  if (assigned && neuronLoad.length >= assigned) {
     neuronLoad[assigned - 1] = Math.max(0, neuronLoad[assigned - 1] - 1);
   }
   delete controllerAssignment[controllerId];
 }
 
-const wss = new WebSocket.Server({ port: WS_PORT });
+// ── Broadcast helpers ──────────────────────────────────────────────────────
 
-// Capacity check endpoint
+function sendOscTo(ws, msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(osc.writePacket(msg));
+    } catch (e) {
+      console.error("Error sending OSC:", e);
+    }
+  }
+}
+
+/**
+ * Send an OSC message to every connected client (controllers + admins +
+ * visual clients), optionally excluding one sender.
+ */
+function broadcastToAll(msg, excludeWs) {
+  const packet = osc.writePacket(msg);
+  for (const id of Object.keys(controllers)) {
+    const ws = controllers[id];
+    if (ws !== excludeWs && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(packet); } catch (_) {}
+    }
+  }
+  for (const id of Object.keys(adminPanels)) {
+    const ws = adminPanels[id];
+    if (ws !== excludeWs && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(packet); } catch (_) {}
+    }
+  }
+  for (const id of Object.keys(visualClients)) {
+    const ws = visualClients[id];
+    if (ws !== excludeWs && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(packet); } catch (_) {}
+    }
+  }
+}
+
+function broadcastToVisuals(msg) {
+  const packet = osc.writePacket(msg);
+  for (const id of Object.keys(visualClients)) {
+    const ws = visualClients[id];
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(packet); } catch (_) {}
+    }
+  }
+}
+
+// ── Wire simulation events ─────────────────────────────────────────────────
+
+sim.on("spike", (neuronId) => {
+  // Broadcast spike to all visual clients + controllers + admins
+  broadcastToAll({
+    address: `/server/spike/${neuronId}`,
+    args: [],
+  });
+
+  // Forward /pulse to external OSC
+  if (oscUdpPort) {
+    try {
+      oscUdpPort.send({
+        address: "/pulse",
+        args: [{ type: "i", value: neuronId }],
+      });
+    } catch (e) {
+      console.error("Error forwarding spike to OSC:", e);
+    }
+  }
+});
+
+sim.on("dc", ({ id, value }) => {
+  if (typeof id !== "number" || typeof value !== "number") return;
+  broadcastToAll({
+    address: "/server/neuron",
+    args: [
+      { type: "i", value: id },
+      { type: "f", value },
+    ],
+  });
+});
+
+sim.on("voltages", (voltages) => {
+  // Build OSC message with all Vnorm values — only visual clients need this
+  const args = voltages.map((v) => ({ type: "f", value: v }));
+  broadcastToVisuals({
+    address: "/server/voltages",
+    args,
+  });
+});
+
+// ── Start simulation loop ──────────────────────────────────────────────────
+
+sim.start();
+
+// ── WebSocket server ───────────────────────────────────────────────────────
+
+const wss = new WebSocket.Server({ port: WS_PORT });
+console.log(`WebSocket server on port ${WS_PORT}`);
+
+// ── HTTP API ───────────────────────────────────────────────────────────────
+
 app.get("/api/controller/check", (req, res) => {
   const controllerId = req.query.controllerId;
   const current = Object.keys(controllers).length;
@@ -184,9 +322,7 @@ app.get("/api/controller/check", (req, res) => {
   res.json({ current, max, allowed });
 });
 
-// Public config endpoint (exposes only non-sensitive values)
 app.get("/api/config", (req, res) => {
-  // Prefer explicit wsUrl from config; otherwise construct from request host and WS port
   const xfProto = req.headers["x-forwarded-proto"];
   const isSecure = req.protocol === "https" || xfProto === "https";
   const scheme = isSecure ? "wss" : "ws";
@@ -201,410 +337,416 @@ app.get("/api/config", (req, res) => {
   });
 });
 
-// Monitor API: Get connected clients
 app.get("/api/clients", (req, res) => {
   const clientsData = {};
-  
-  // Add simulation
-  if (simulationWs) {
-    clientsData['simulation'] = {
-      type: 'Simulation',
-      lastActivity: clientActivity['simulation'] || null
+
+  // The simulation is always running (server-side)
+  clientsData["simulation"] = {
+    type: "Simulation (server)",
+    running: sim.running,
+    neurons: sim.numNeurons,
+  };
+
+  // Visual clients
+  Object.keys(visualClients).forEach((vid) => {
+    clientsData[vid] = {
+      type: "Visual",
+      lastActivity: clientActivity[vid] || null,
     };
-  }
-  
-  // Add controllers
-  Object.keys(controllers).forEach(cid => {
+  });
+
+  // Controllers
+  Object.keys(controllers).forEach((cid) => {
     clientsData[cid] = {
-      type: 'Controller',
+      type: "Controller",
       assignment: controllerAssignment[cid] || null,
-      lastActivity: clientActivity[cid] || null
+      lastActivity: clientActivity[cid] || null,
     };
   });
-  
-  // Add admin panels
-  Object.keys(adminPanels).forEach(aid => {
+
+  // Admin panels
+  Object.keys(adminPanels).forEach((aid) => {
     clientsData[aid] = {
-      type: 'Admin',
-      lastActivity: clientActivity[aid] || null
+      type: "Admin",
+      lastActivity: clientActivity[aid] || null,
     };
   });
-  
+
   res.json({
     clients: clientsData,
-    hasSimulation: !!simulationWs,
+    hasSimulation: sim.running,
     controllerCount: Object.keys(controllers).length,
     adminCount: Object.keys(adminPanels).length,
-    totalClients: Object.keys(clientsData).length
+    visualCount: Object.keys(visualClients).length,
+    totalClients: Object.keys(clientsData).length,
   });
 });
 
-// Monitor API: Disconnect a client
 app.delete("/api/clients/:id", (req, res) => {
   const clientId = req.params.id;
-  
-  if (clientId === 'simulation' && simulationWs) {
-    simulationWs.close();
-    simulationWs = null;
-    delete clientActivity['simulation'];
-    res.json({ success: true, message: 'Simulation disconnected' });
-  } else if (controllers[clientId]) {
-    // Send disconnect notification to controller before closing
+
+  if (controllers[clientId]) {
     const ws = controllers[clientId];
     try {
-      ws.send(osc.writePacket({
-        address: "/disconnect",
-        args: [{ type: "s", value: "Desconectado por el servidor. Espera un minuto antes de recargar." }]
-      }));
-    } catch (e) {
-      console.error('Error sending disconnect message:', e);
-    }
+      ws.send(
+        osc.writePacket({
+          address: "/disconnect",
+          args: [
+            {
+              type: "s",
+              value:
+                "Desconectado por el servidor. Espera un minuto antes de recargar.",
+            },
+          ],
+        }),
+      );
+    } catch (_) {}
     ws.close();
     freeAssignmentFor(clientId);
     delete controllers[clientId];
     delete clientActivity[clientId];
-    res.json({ success: true, message: 'Controller disconnected' });
-  } else if (adminPanels[clientId]) {
-    // Send disconnect notification to admin panel before closing
+    return res.json({ success: true, message: "Controller disconnected" });
+  }
+
+  if (adminPanels[clientId]) {
     const ws = adminPanels[clientId];
     try {
-      ws.send(osc.writePacket({
-        address: "/disconnect",
-        args: [{ type: "s", value: "Desconectado por el servidor. Espera un minuto antes de recargar." }]
-      }));
-    } catch (e) {
-      console.error('Error sending disconnect message:', e);
-    }
+      ws.send(
+        osc.writePacket({
+          address: "/disconnect",
+          args: [
+            {
+              type: "s",
+              value:
+                "Desconectado por el servidor. Espera un minuto antes de recargar.",
+            },
+          ],
+        }),
+      );
+    } catch (_) {}
     ws.close();
     delete adminPanels[clientId];
     delete clientActivity[clientId];
-    res.json({ success: true, message: 'Admin panel disconnected' });
-  } else {
-    res.status(404).json({ success: false, message: 'Client not found' });
+    return res.json({ success: true, message: "Admin panel disconnected" });
+  }
+
+  if (visualClients[clientId]) {
+    visualClients[clientId].close();
+    delete visualClients[clientId];
+    delete clientActivity[clientId];
+    return res.json({ success: true, message: "Visual client disconnected" });
+  }
+
+  res.status(404).json({ success: false, message: "Client not found" });
+});
+
+// Save / Load simulation state via HTTP
+app.post("/api/state/save", express.json(), (req, res) => {
+  try {
+    const filePath =
+      (req.body && req.body.path) ||
+      path.join(__dirname, "state_dump.json");
+    sim.saveStateFile(filePath);
+    res.json({ success: true, path: filePath });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
+app.post("/api/state/load", express.json(), (req, res) => {
+  try {
+    const filePath =
+      (req.body && req.body.path) ||
+      path.join(__dirname, "state_dump.json");
+    const wasRunning = sim.running;
+    if (wasRunning) sim.stop();
+    sim.loadStateFile(filePath);
+    if (wasRunning) sim.start();
+    // Notify all connected clients with fresh init
+    sendInitToAllVisuals();
+    res.json({ success: true, neurons: sim.numNeurons });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ── Helper: send init state to all visual clients ──────────────────────────
+
+function sendInitToAllVisuals() {
+  const initData = sim.getInitState();
+  for (const vid of Object.keys(visualClients)) {
+    sendOscTo(visualClients[vid], {
+      address: "/server/init",
+      args: [
+        { type: "s", value: vid },
+        { type: "s", value: JSON.stringify(initData) },
+      ],
+    });
+  }
+}
+
+// ── WebSocket connection handling ──────────────────────────────────────────
+
 wss.on("connection", (ws) => {
-  const oscPort = new osc.WebSocketPort({
-    socket: ws,
-    metadata: true,
-  });
+  const oscPort = new osc.WebSocketPort({ socket: ws, metadata: true });
 
   oscPort.on("message", (oscMsg) => {
-    let controllerId;
     const addressParts = oscMsg.address.split("/");
-    
-    // Track activity for monitor and broadcast to monitor WebSocket
+    const prefix = addressParts[1];
+
+    // ── Track activity for monitor ──────────────────────────────────────
     let activeClientId = null;
-    if (ws === simulationWs) {
-      clientActivity['simulation'] = Date.now();
-      activeClientId = 'simulation';
-      
-      // Forward simulation messages to external OSC
-      if (oscUdpPort && oscMsg.address === "/pulse") {
-        try {
-          console.log(`[OSC Forward] simulation -> ${config.oscForward.host}:${config.oscForward.port} | ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
-          oscUdpPort.send(oscMsg);
-        } catch (e) {
-          console.error("Error forwarding simulation pulse:", e);
-        }
-      }
-    } else {
-      controllerId = controllerWs2Id(ws);
-      if (controllerId) {
-        clientActivity[controllerId] = Date.now();
-        activeClientId = controllerId;
-      } else {
-        const adminId = adminWs2Id(ws);
-        if (adminId) {
-          clientActivity[adminId] = Date.now();
-          activeClientId = adminId;
-        }
-      }
-    }
-    
-    // Broadcast activity to monitor
+    const cid = controllerWs2Id(ws);
+    const aid = adminWs2Id(ws);
+    const vid = visualWs2Id(ws);
+    if (cid) { clientActivity[cid] = Date.now(); activeClientId = cid; }
+    else if (aid) { clientActivity[aid] = Date.now(); activeClientId = aid; }
+    else if (vid) { clientActivity[vid] = Date.now(); activeClientId = vid; }
+
     if (activeClientId && monitorWs && monitorWs.readyState === WebSocket.OPEN) {
       try {
-        monitorWs.send(osc.writePacket({
-          address: "/activity",
-          args: [{ type: "s", value: activeClientId }]
-        }));
-      } catch (e) {
-        console.error('Error sending activity to monitor:', e);
-      }
+        monitorWs.send(
+          osc.writePacket({
+            address: "/activity",
+            args: [{ type: "s", value: activeClientId }],
+          }),
+        );
+      } catch (_) {}
     }
-    
-    switch (addressParts[1]) {
-      case "pulse":
-        // Handle /pulse messages - only forward to external OSC, don't broadcast to clients
-        // (clients now receive /server/spike/{id} instead)
-        if (ws === simulationWs) {
-          // Already forwarded above, nothing more to do
-          console.log("Simulation pulse forwarded to external OSC only");
-        } else {
-          // If pulse comes from controller/admin, forward to simulation and external OSC
-          controllerId = controllerWs2Id(ws);
-          const pulseAdminId = adminWs2Id(ws);
-          const pulseSenderId = controllerId || pulseAdminId;
-          if (simulationWs) {
-            simulationWs.send(osc.writePacket(oscMsg));
-          }
-          // Forward to external OSC
-          if (oscUdpPort) {
-            try {
-              console.log(`[OSC Forward] ${pulseSenderId || 'unknown'} -> ${config.oscForward.host}:${config.oscForward.port} | ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
-              oscUdpPort.send(oscMsg);
-            } catch (e) {
-              console.error("Error forwarding pulse message:", e);
-            }
-          }
-        }
+
+    // ── Route by prefix ─────────────────────────────────────────────────
+
+    switch (prefix) {
+      // ── Visual client registration ────────────────────────────────────
+      case "registerVisual": {
+        const visualId =
+          (oscMsg.args && oscMsg.args[0] && oscMsg.args[0].value) ||
+          "visual-" + Math.random().toString(36).substring(2, 8);
+        visualClients[visualId] = ws;
+        clientActivity[visualId] = Date.now();
+        console.log(`Visual client connected: ${visualId}`);
+
+        // Send full init state
+        const initData = sim.getInitState();
+        sendOscTo(ws, {
+          address: "/server/init",
+          args: [
+            { type: "s", value: visualId },
+            { type: "s", value: JSON.stringify(initData) },
+          ],
+        });
         break;
+      }
+
+      // ── Backward compat: treat registerSimulation as registerVisual ───
+      case "registerSimulation": {
+        const visualId = "visual-sim-" + Math.random().toString(36).substring(2, 8);
+        visualClients[visualId] = ws;
+        clientActivity[visualId] = Date.now();
+        console.log(`Visual client (legacy registerSimulation) connected: ${visualId}`);
+
+        const initData = sim.getInitState();
+        sendOscTo(ws, {
+          address: "/server/init",
+          args: [
+            { type: "s", value: visualId },
+            { type: "s", value: JSON.stringify(initData) },
+          ],
+        });
+        break;
+      }
+
+      // ── Monitor ───────────────────────────────────────────────────────
       case "connectMonitor":
         monitorWs = ws;
-        console.log('Monitor connected');
+        console.log("Monitor connected");
         break;
-      case "registerSimulation":
-        simulationWs = ws;
-        clientActivity['simulation'] = Date.now();
-        console.log(
-          `Updated current simulation (previous ones won't receive updates)`,
-        );
-        for (let controllerId of Object.keys(controllers)) {
-          simulationWs.send(
-            osc.writePacket({
-              address: "/getState",
-              args: [{ type: "s", value: controllerId }],
-            }),
-          );
-        }
-        break;
-      case "connectAdmin":
-        if (simulationWs == null) return; // no simulation is registered
+
+      // ── Admin panel ───────────────────────────────────────────────────
+      case "connectAdmin": {
         const connectAdminId = oscMsg.args[0].value;
         adminPanels[connectAdminId] = ws;
         clientActivity[connectAdminId] = Date.now();
-        // Send current state to admin panel
-        simulationWs.send(
-          osc.writePacket({
-            address: "/getState",
-            args: [{ type: "s", value: connectAdminId }],
-          }),
-        );
-        console.log(`Connected admin panel ${connectAdminId}`);
+
+        // Get state from SimulationRunner for this admin.
+        // Use "admin-" prefix so _buildStateMessages sends weights & syntypes.
+        const stateMessages = sim.handleMessage({
+          address: "/getState",
+          args: [{ type: "s", value: "admin-" + connectAdminId }],
+        });
+        for (const msg of stateMessages) {
+          sendOscTo(ws, msg);
+        }
+
+        console.log(`Admin panel connected: ${connectAdminId}`);
         break;
-      case "connectController":
-        if (simulationWs == null) return; // no simulation is registered
-        controllerId = oscMsg.args[0].value;
-        {
-          const current = Object.keys(controllers).length;
-          const max = config.maxControllers ?? 4;
-          const isReconnecting = !!controllers[controllerId];
-          const allowed = isReconnecting || current < max;
-          if (!allowed) {
-            console.log(
-              `Connection denied for controller ${controllerId}: capacity reached (${current}/${max})`,
-            );
-            return;
-          }
+      }
+
+      // ── Controller ────────────────────────────────────────────────────
+      case "connectController": {
+        const controllerId = oscMsg.args[0].value;
+        const current = Object.keys(controllers).length;
+        const max = config.maxControllers ?? 4;
+        const isReconnecting = !!controllers[controllerId];
+        if (!isReconnecting && current >= max) {
+          console.log(
+            `Connection denied for controller ${controllerId}: capacity (${current}/${max})`,
+          );
+          return;
         }
         controllers[controllerId] = ws;
         clientActivity[controllerId] = Date.now();
-        // If we already know number of neurons, assign immediately; otherwise we'll assign after first state
-        if (numNeurons) {
-          const assigned = assignNeuronToController(controllerId);
-          if (assigned) notifyAssignment(controllerId);
+
+        // Assign neuron
+        const assigned = assignNeuronToController(controllerId);
+        if (assigned) notifyAssignment(controllerId);
+
+        // Send current state from SimulationRunner
+        const stateMessages = sim.handleMessage({
+          address: "/getState",
+          args: [{ type: "s", value: controllerId }],
+        });
+        for (const msg of stateMessages) {
+          sendOscTo(ws, msg);
         }
-        // ask the simulation for its state for the controller to sync
-        // TODO: since we now only have one simulation, now we might just store the state in the server
-        simulationWs.send(
-          osc.writePacket({
-            address: "/getState",
-            args: [{ type: "s", value: controllerId }],
-          }),
-        );
-        console.log(`Connected controller ${controllerId} to simulation`);
+
+        console.log(`Controller connected: ${controllerId}`);
         break;
-      case "state":
-      case "server":
-        // Messages from simulation to clients - broadcast as-is
-        if (addressParts[2] === "neurons") {
-          // /state/neurons or /server/neurons/dc - contains controllerId in first arg
-          controllerId = oscMsg.args[0].value;
-          // Learn neuron count from state length and ensure structures
-          // Exclude the first arg (controllerId)
-          ensureNeuronCapacity(oscMsg.args.length - 1);
-          // Forward state to the controller or admin (without controllerId)
-          const targetWs = controllers[controllerId] || adminPanels[controllerId];
-          if (targetWs) {
-            targetWs.send(
-              osc.writePacket({
-                address: oscMsg.address,
-                args: oscMsg.args.slice(1),
-              }),
-            );
-          }
-          // If it's a controller and not assigned yet, assign now that we know numNeurons
-          if (controllers[controllerId] && !controllerAssignment[controllerId]) {
-            const assigned = assignNeuronToController(controllerId);
-            if (assigned) notifyAssignment(controllerId);
-          }
-        } else {
-          // Other /server/* messages - broadcast to all clients
-          for (let controller of Object.keys(controllers)) {
-            controllers[controller].send(osc.writePacket(oscMsg));
-          }
-          for (let admin of Object.keys(adminPanels)) {
-            adminPanels[admin].send(osc.writePacket(oscMsg));
-          }
-        }
-        break;
+      }
+
+      // ── Parameter updates from controllers / admins ───────────────────
       case "update":
-      case "client":
-        console.log(addressParts[1] === "client" ? "client" : "update", oscMsg);
-        // Send the update to the simulation
-        controllerId = controllerWs2Id(ws);
-        const updateAdminId = adminWs2Id(ws);
-        const senderId = controllerId || updateAdminId;
-        if (simulationWs == null) return; // no simulation is registered
-        simulationWs.send(osc.writePacket(oscMsg));
-        
-        // Forward dc/neuron updates to external OSC (convert /client/neuron to /dc for compatibility)
-        if (oscUdpPort && (oscMsg.address.includes("/dc") || oscMsg.address.includes("/neuron"))) {
+      case "client": {
+        const senderId = controllerWs2Id(ws) || adminWs2Id(ws);
+        console.log(`${prefix}`, oscMsg.address, JSON.stringify(oscMsg.args));
+
+        // Apply to server-side simulation — get back broadcast messages
+        const broadcasts = sim.handleMessage(oscMsg);
+
+        if (broadcasts && broadcasts.length > 0) {
+          scheduleAutosave();
+        }
+
+        // Broadcast resulting /server/* messages to ALL clients (including
+        // the sender).  The simulation generates derived values server-side
+        // (e.g. individual random weights from weight_mean), so the sender
+        // needs them too.  Simple echo-backs are idempotent and harmless.
+        for (const msg of broadcasts) {
+          broadcastToAll(msg);
+        }
+
+        // Forward dc/neuron updates to external OSC
+        if (
+          oscUdpPort &&
+          (oscMsg.address.includes("/dc") ||
+            oscMsg.address.includes("/neuron"))
+        ) {
           try {
             let forwardMsg = oscMsg;
             if (oscMsg.address.includes("/neuron")) {
-              forwardMsg = {
-                address: "/dc",
-                args: oscMsg.args
-              };
+              forwardMsg = { address: "/dc", args: oscMsg.args };
             }
-            console.log(`[OSC Forward] ${senderId || 'unknown'} -> ${config.oscForward.host}:${config.oscForward.port} | ${forwardMsg.address} ${JSON.stringify(forwardMsg.args)}`);
             oscUdpPort.send(forwardMsg);
           } catch (e) {
-            console.error("Error forwarding OSC message:", e);
+            console.error("Error forwarding OSC:", e);
           }
-        }
-        
-        // Convert /client/* to /server/* for broadcast
-        let broadcastMsg = oscMsg;
-        if (oscMsg.address.startsWith("/client/")) {
-          broadcastMsg = {
-            address: oscMsg.address.replace("/client/", "/server/"),
-            args: oscMsg.args
-          };
-        }
-        
-        // Broadcast to all other controllers
-        for (let controller of Object.keys(controllers)) {
-          if (controller == senderId) continue;
-          controllers[controller].send(osc.writePacket(broadcastMsg));
-        }
-        // Broadcast to all admin panels
-        for (let admin of Object.keys(adminPanels)) {
-          if (admin == senderId) continue;
-          adminPanels[admin].send(osc.writePacket(broadcastMsg));
         }
         break;
-      case "pulse":
-        // Handle /pulse messages - only forward to external OSC, don't broadcast to clients
-        // (clients now receive /server/spike/{id} instead)
-        if (ws === simulationWs) {
-          // Already forwarded above in the early check, nothing more to do
-          console.log("Simulation pulse forwarded to external OSC only");
-        } else {
-          // If pulse comes from controller/admin, forward to simulation and external OSC
-          controllerId = controllerWs2Id(ws);
-          const pulseAdminId = adminWs2Id(ws);
-          const pulseSenderId = controllerId || pulseAdminId;
-          if (simulationWs) {
-            simulationWs.send(osc.writePacket(oscMsg));
-          }
-          // Forward to external OSC
-          if (oscUdpPort) {
-            try {
-              console.log(`[OSC Forward] ${pulseSenderId || 'unknown'} -> ${config.oscForward.host}:${config.oscForward.port} | ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
-              oscUdpPort.send(oscMsg);
-            } catch (e) {
-              console.error("Error forwarding pulse message:", e);
-            }
+      }
+
+      // ── Pulse from external / legacy ──────────────────────────────────
+      case "pulse": {
+        if (oscUdpPort) {
+          try { oscUdpPort.send(oscMsg); } catch (_) {}
+        }
+        break;
+      }
+
+      // ── Explicit getState request (admin sends this after connectAdmin) ─
+      case "getState": {
+        const requesterId = oscMsg.args?.[0]?.value;
+        if (requesterId) {
+          const stateMessages = sim.handleMessage(oscMsg);
+          for (const msg of stateMessages) {
+            sendOscTo(ws, msg);
           }
         }
+        break;
+      }
+
+      // ── Legacy: browser sim used to send /state/* and /server/* ────────
+      case "state":
+      case "server":
         break;
     }
   });
 
+  // ── Connection close ──────────────────────────────────────────────────
   ws.on("close", () => {
-    if (monitorWs == ws) {
+    if (monitorWs === ws) {
       monitorWs = null;
-      console.log(`Monitor disconnected`);
+      console.log("Monitor disconnected");
       return;
     }
-    if (simulationWs == ws) {
-      simulationWs = null;
-      delete clientActivity['simulation'];
-      console.log(`Simulation disconnected`);
-      // Notify monitor of simulation disconnect
-      if (monitorWs && monitorWs.readyState === WebSocket.OPEN) {
-        try {
-          monitorWs.send(osc.writePacket({
-            address: "/clientDisconnected",
-            args: [{ type: "s", value: "simulation" }]
-          }));
-        } catch (e) {
-          console.error('Error notifying monitor of simulation disconnect:', e);
-        }
-      }
+
+    const cid = controllerWs2Id(ws);
+    if (cid) {
+      delete controllers[cid];
+      delete clientActivity[cid];
+      freeAssignmentFor(cid);
+      console.log(`Controller ${cid} disconnected`);
+      notifyMonitorDisconnect(cid);
       return;
     }
-    const controllerId = controllerWs2Id(ws);
-    if (controllerId) {
-      delete controllers[controllerId];
-      delete clientActivity[controllerId];
-      freeAssignmentFor(controllerId);
-      console.log(`Controller ${controllerId} disconnected`);
-      // Notify monitor of controller disconnect
-      if (monitorWs && monitorWs.readyState === WebSocket.OPEN) {
-        try {
-          monitorWs.send(osc.writePacket({
-            address: "/clientDisconnected",
-            args: [{ type: "s", value: controllerId }]
-          }));
-        } catch (e) {
-          console.error('Error notifying monitor of controller disconnect:', e);
-        }
-      }
+
+    const aid = adminWs2Id(ws);
+    if (aid) {
+      delete adminPanels[aid];
+      delete clientActivity[aid];
+      console.log(`Admin panel ${aid} disconnected`);
+      notifyMonitorDisconnect(aid);
       return;
     }
-    const adminId = adminWs2Id(ws);
-    if (adminId) {
-      delete adminPanels[adminId];
-      delete clientActivity[adminId];
-      console.log(`Admin panel ${adminId} disconnected`);
-      // Notify monitor of admin panel disconnect
-      if (monitorWs && monitorWs.readyState === WebSocket.OPEN) {
-        try {
-          monitorWs.send(osc.writePacket({
-            address: "/clientDisconnected",
-            args: [{ type: "s", value: adminId }]
-          }));
-        } catch (e) {
-          console.error('Error notifying monitor of admin disconnect:', e);
-        }
-      }
+
+    const vid = visualWs2Id(ws);
+    if (vid) {
+      delete visualClients[vid];
+      delete clientActivity[vid];
+      console.log(`Visual client ${vid} disconnected`);
+      notifyMonitorDisconnect(vid);
     }
   });
 });
 
-function controllerWs2Id(controllerWs) {
-  for (let controller of Object.keys(controllers))
-    if (controllers[controller] == controllerWs) return controller;
+// ── Utility functions ──────────────────────────────────────────────────────
+
+function controllerWs2Id(targetWs) {
+  for (const id of Object.keys(controllers))
+    if (controllers[id] === targetWs) return id;
   return null;
 }
 
-function adminWs2Id(adminWs) {
-  for (let admin of Object.keys(adminPanels))
-    if (adminPanels[admin] == adminWs) return admin;
+function adminWs2Id(targetWs) {
+  for (const id of Object.keys(adminPanels))
+    if (adminPanels[id] === targetWs) return id;
   return null;
+}
+
+function visualWs2Id(targetWs) {
+  for (const id of Object.keys(visualClients))
+    if (visualClients[id] === targetWs) return id;
+  return null;
+}
+
+function notifyMonitorDisconnect(clientId) {
+  if (monitorWs && monitorWs.readyState === WebSocket.OPEN) {
+    try {
+      monitorWs.send(
+        osc.writePacket({
+          address: "/clientDisconnected",
+          args: [{ type: "s", value: clientId }],
+        }),
+      );
+    } catch (_) {}
+  }
 }

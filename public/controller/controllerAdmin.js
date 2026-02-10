@@ -9,6 +9,8 @@ let maxWeight = 80;
 // Store incoming state before UI is created
 let pendingWeights = {}; // key: "from-to", value: weight
 let pendingSynTypes = {}; // key: neuronId, value: synType
+let pendingDrops = {}; // key: "from-to", value: drop (0/1)
+let pendingDropOrderKeys = null; // array of "from-to" keys
 
 const adminSliders = [];
 const adminKnobs = [];
@@ -16,6 +18,7 @@ const adminButtons = [];
 const adminParamSliders = [];
 let adminTypeSlider = null;
 let adminPulseForceSlider = null;
+let adminPulseWidthSlider = null;
 const adminForceSliders = [];
 let dropSlider = null;
 const adminToggles = [];
@@ -134,7 +137,7 @@ function parseOscMessage(oscMsg) {
                 for (let i = 1; i < oscMsg.args.length; i++) {
                     settings["dc " + i] = oscMsg.args[i].value;
                 }
-                neuronsAmount = oscMsg.args.length;
+                neuronsAmount = oscMsg.args.length - 1;
                 createAdminControls();
                 // Update existing sliders if they were already created
                 for (let i = 1; i < oscMsg.args.length; i++) {
@@ -171,60 +174,103 @@ function parseOscMessage(oscMsg) {
                 }
                 break;
             }
+
+            // Handle /server/drop/{from}/{to}
+            if (addressParts[2] === "drop") {
+                const fromId = parseInt(addressParts[3], 10);
+                const toId = parseInt(addressParts[4], 10);
+                const dropValue = oscMsg.args[0].value;
+                pendingDrops[`${fromId}-${toId}`] = dropValue;
+                // Immediately update knob if it exists
+                const knob = adminKnobs.find((k) => k.fromId === fromId && k.toId === toId);
+                if (knob) {
+                    knob.drop = dropValue >= 0.5;
+                }
+                break;
+            }
+
+            // Handle /server/droporder (JSON array of "from-to" keys)
+            if (addressParts[2] === "droporder") {
+                const payload = oscMsg.args?.[0]?.value;
+                try {
+                    const parsed = JSON.parse(payload);
+                    if (Array.isArray(parsed)) {
+                        dropOrderKeys = parsed.slice();
+                        pendingDropOrderKeys = parsed.slice();
+                        buildDropOrder();
+                    }
+                } catch (_) {}
+                break;
+            }
             
             const neuronName = addressParts[2];
-            if (/^dc \d+$/.test(neuronName)) {
-                const neuronId = parseInt(neuronName.split(" ")[1], 10);
+            // Normalise underscores→spaces so both "weight_mean" and
+            // "weight mean" style addresses match the admin's setting keys.
+            const normName = neuronName ? neuronName.replace(/_/g, " ") : neuronName;
+            if (/^dc \d+$/.test(normName)) {
+                const neuronId = parseInt(normName.split(" ")[1], 10);
                 const slider = adminSliders.find((s) => s.neuronId === neuronId);
                 if (slider) {
                     slider.value = oscMsg.args[0].value;
                 }
             }
             // Legacy format support for old messages
-            if (/^dc \d+$/.test(neuronName)) {
-                const neuronId = parseInt(neuronName.split(" ")[1], 10);
+            if (/^dc \d+$/.test(normName)) {
+                const neuronId = parseInt(normName.split(" ")[1], 10);
                 const slider = adminSliders.find((s) => s.neuronId === neuronId);
                 if (slider) {
                     slider.value = oscMsg.args[0].value;
                 }
             }
-            if (neuronName === "weight mean" || neuronName === "weight size" || neuronName === "delay mean" || neuronName === "delay size") {
-                settings[neuronName] = oscMsg.args[0].value;
-                const slider = adminParamSliders.find((s) => s.labelMap === neuronName);
+            if (normName === "weight mean" || normName === "weight size" || normName === "delay mean" || normName === "delay size") {
+                settings[normName] = oscMsg.args[0].value;
+                const slider = adminParamSliders.find((s) => s.labelMap === normName);
                 if (slider) {
                     slider.value = oscMsg.args[0].value;
                 }
             }
-            if (neuronName === "syn type") {
-                settings[neuronName] = oscMsg.args[0].value;
+            if (normName === "syn type") {
+                settings[normName] = oscMsg.args[0].value;
                 if (adminTypeSlider) {
                     adminTypeSlider.value = oscMsg.args[0].value;
                 }
             }
-            if (neuronName === "pulse force") {
-                settings[neuronName] = oscMsg.args[0].value;
+            if (normName === "pulse force") {
+                settings[normName] = oscMsg.args[0].value;
                 if (adminPulseForceSlider) {
                     adminPulseForceSlider.value = oscMsg.args[0].value;
                 }
             }
-            if (neuronName === "gravity force" || neuronName === "repel force" || neuronName === "attract force") {
-                settings[neuronName] = oscMsg.args[0].value;
-                const slider = adminForceSliders.find((s) => s.labelMap === neuronName);
+            if (normName === "pulse width") {
+                settings[normName] = oscMsg.args[0].value;
+                if (adminPulseWidthSlider) {
+                    adminPulseWidthSlider.value = oscMsg.args[0].value;
+                }
+            }
+            if (normName === "gravity force" || normName === "repel force" || normName === "attract force") {
+                settings[normName] = oscMsg.args[0].value;
+                const slider = adminForceSliders.find((s) => s.labelMap === normName);
                 if (slider) {
                     slider.value = oscMsg.args[0].value;
                 }
             }
-            if (neuronName === "audio volume") {
-                settings[neuronName] = oscMsg.args[0].value;
+            if (normName === "audio volume") {
+                settings[normName] = oscMsg.args[0].value;
                 if (volumeSlider) {
                     volumeSlider.value = oscMsg.args[0].value;
                 }
             }
-            if (neuronName === "audio mute") {
-                settings[neuronName] = oscMsg.args[0].value;
+            if (normName === "audio mute") {
+                settings[normName] = oscMsg.args[0].value;
             }
-            if (neuronName === "show scopes") {
-                settings[neuronName] = oscMsg.args[0].value;
+            if (normName === "show scopes") {
+                settings[normName] = oscMsg.args[0].value;
+            }
+            if (normName === "dropout") {
+                settings[normName] = oscMsg.args[0].value;
+                if (dropSlider) {
+                    dropSlider.value = oscMsg.args[0].value;
+                }
             }
             break;
         }
@@ -253,6 +299,7 @@ function createAdminControls() {
     adminParamSliders.length = 0;
     adminTypeSlider = null;
     adminPulseForceSlider = null;
+    adminPulseWidthSlider = null;
     adminForceSliders.length = 0;
     dropSlider = null;
     adminToggles.length = 0;
@@ -291,6 +338,25 @@ function applyPendingState() {
         if (knob) {
             knob.value = constrain(weightValue / maxWeight, 0, 1);
         }
+    }
+
+    // Apply pending drop states
+    for (const [key, dropValue] of Object.entries(pendingDrops)) {
+        const [fromId, toId] = key.split('-').map(id => parseInt(id));
+        const knob = adminKnobs.find((k) => k.fromId === fromId && k.toId === toId);
+        if (knob) {
+            knob.drop = dropValue >= 0.5;
+        }
+    }
+
+    if (dropSlider && settings["dropout"] !== undefined) {
+        dropSlider.value = settings["dropout"];
+    }
+
+    if (pendingDropOrderKeys && pendingDropOrderKeys.length) {
+        dropOrderKeys = pendingDropOrderKeys.slice();
+        buildDropOrder();
+        pendingDropOrderKeys = null;
     }
     
     // Also ensure DC sliders match what's in settings (in case of any mismatch)
@@ -378,7 +444,7 @@ function createB1Controls(x, y, w, h) {
     const sliderHeight = layout.paramSliderHeight;
     
     // Calculate dynamic spacing to fit all controls
-    const numForceSliders = 4;
+    const numForceSliders = 5;
     const numAudioRows = 1; // Volume slider + mute + scopes button on same row
     const totalElements = numForceSliders + numAudioRows;
     
@@ -445,6 +511,20 @@ function createB1Controls(x, y, w, h) {
         (val) => updateSetting("attract force", val),
         "attract force"
     ));
+    currentY += sliderHeight + labelSpace + rowGap;
+
+    adminPulseWidthSlider = new AdminParamSlider(
+        innerX,
+        currentY + labelSpace,
+        sliderWidth,
+        sliderHeight,
+        "Pulse Width",
+        getParamValue("pulse width", 0.3),
+        0.05,
+        2.0,
+        (val) => updateSetting("pulse width", val),
+        "pulse width"
+    );
     currentY += sliderHeight + labelSpace + rowGap;
 
     // Audio controls (volume slider + mute button + scopes button on same row)
@@ -549,6 +629,7 @@ function createKnobControls(x, y, w, h) {
             applyDropSlider(val);
         }
     );
+    dropSlider.value = getParamValue("dropout", 0.5);
 
     const typeSliderY = row1Y + (layout.buttonHeight - layout.paramSliderHeight) / 2;
     adminTypeSlider = new AdminParamSlider(
@@ -658,6 +739,9 @@ function setAllKnobsRandom() {
 }
 
 function applyDropSlider(val) {
+    // Persist slider value without randomising server-side drops
+    updateSetting("dropout value", val);
+
     const pool = dropOrder.length ? dropOrder : adminKnobs;
     const total = pool.length;
     const dropCount = Math.round((1 - val) * total);
@@ -717,6 +801,9 @@ function draw() {
     if (adminPulseForceSlider) {
         adminPulseForceSlider.draw();
     }
+    if (adminPulseWidthSlider) {
+        adminPulseWidthSlider.draw();
+    }
     for (const slider of adminForceSliders) {
         slider.draw();
     }
@@ -761,6 +848,8 @@ function connectToSimulation() {
     neuronsAmount = 0;
     pendingWeights = {};
     pendingSynTypes = {};
+    pendingDrops = {};
+    pendingDropOrderKeys = null;
     const oscMessage = {
         address: "/connectAdmin",
         args: [
@@ -859,6 +948,9 @@ function mousePressed() {
     if (adminPulseForceSlider) {
         adminPulseForceSlider.mousePressed();
     }
+    if (adminPulseWidthSlider) {
+        adminPulseWidthSlider.mousePressed();
+    }
     for (const slider of adminForceSliders) {
         slider.mousePressed();
     }
@@ -898,6 +990,9 @@ function mouseDragged() {
     if (adminPulseForceSlider) {
         adminPulseForceSlider.mouseDragged();
     }
+    if (adminPulseWidthSlider) {
+        adminPulseWidthSlider.mouseDragged();
+    }
     for (const slider of adminForceSliders) {
         slider.mouseDragged();
     }
@@ -924,6 +1019,9 @@ function mouseReleased() {
     }
     if (adminPulseForceSlider) {
         adminPulseForceSlider.mouseReleased();
+    }
+    if (adminPulseWidthSlider) {
+        adminPulseWidthSlider.mouseReleased();
     }
     for (const slider of adminForceSliders) {
         slider.mouseReleased();

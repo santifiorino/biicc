@@ -15,17 +15,19 @@
   <body>
     <script src="../p5.min.js"></script>
     <script>
+      // Default neuron count (will be overridden by /server/init)
       var n_neurons = 12;
+      var net_scale = 1.0;
+      var net_offset_y = 0;
 
       const params = new URLSearchParams(document.location.search);
       if (params.get("nn")) n_neurons = parseInt(params.get("nn"), 10);
     </script>
-    <script src="snn.js"></script>
+    <!-- Visual + audio modules (no simulation logic) -->
     <script src="visuals.js"></script>
     <script src="synth.js"></script>
     <script src="forces.js"></script>
     <script src="colors.js"></script>
     <script src="sketch.js"></script>
-    <script src="datgui.min.js"></script>
   </body>
 </html>

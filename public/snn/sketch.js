@@ -1,22 +1,35 @@
+/**
+ * sketch.js — Pure visual renderer for the SNN simulation.
+ *
+ * The NeuralNetwork now runs server-side.  This client:
+ *   • Registers as a visual client (/registerVisual)
+ *   • Receives /server/init with full network structure (JSON)
+ *   • Receives /server/voltages every tick (Vnorm per neuron)
+ *   • Receives /server/spike/{id} when a neuron fires
+ *   • Receives /server/* param changes for rendering updates
+ *   • Keeps the force-directed layout, circles, pulses, scopes, audio
+ */
+
+// ── Global visual state ────────────────────────────────────────────────────
+
 var syn_colors;
 var net_score_border;
 var frame_rate = 60;
 var showScopes = false;
 
-maxDC = 150;
-maxWeight = 80;
-pulseDecay = 0.85;
+var maxDC = 150;
+var maxWeight = 80;
+var pulseDecay = 0.85;
 
-i = 0;
-marginx = 50;
-gravityConstant = 1;
-forceConstantRepulsive = 10000;
-forceConstantAttractive = 0.00005;
-mass = 1;
-knobR = 20;
-score_sep = (12 - n_neurons) * 5 + 60;
+var marginx = 50;
+var gravityConstant = 1;
+var forceConstantRepulsive = 10000;
+var forceConstantAttractive = 0.00005;
+var mass = 1;
+var knobR = 20;
+var score_sep;
 
-settings = defaultSettings();
+var settings = defaultSettings();
 
 function defaultSettings() {
   return {
@@ -45,329 +58,269 @@ function defaultSettings() {
   };
 }
 
-circles = [];
-pulses = [];
-knobs = [];
-scopes = [];
-voices = [];
-scores = [];
-NN = null;
+// Visual / audio objects
+var circles = [];
+var pulses = [];
+var knobs = [];
+var scopes = [];
+var voices = [];
+var scores = [];
 
-nodes = [];
-nodeCon = [];
+var nodes = [];
+var nodeCon = [];
 
-clicked = false;
-lerpValue = 0.2;
+var clicked = false;
+var lerpValue = 0.2;
+var closeNode = null;
 
-// scale = ["A4",]
-escala_mayor = [
-  "D3",
-  "E3",
-  "F#3",
-  "G#3",
-  "A3",
-  "B3",
-  "C#4",
-  "D4",
-  "E4",
-  "F#4",
-  "G#4",
-  "A4",
+// Network data received from server
+var networkData = null; // { neurons, synapses } from server init
+var neuronVnorms = []; // updated every tick from /server/voltages
+var neuronSpikes = []; // flags set to true for one frame on spike
+var synapseMap = {}; // "fromId-toId" → index in networkData.synapses
+var numSynapses = 0;
+
+// Musical scales
+var escala_mayor = [
+  "D3","E3","F#3","G#3","A3","B3","C#4","D4","E4","F#4","G#4","A4",
 ];
-escala_menor = [
-  "D3",
-  "E3",
-  "F3",
-  "G3",
-  "A3",
-  "B3",
-  "C4",
-  "D4",
-  "E4",
-  "F4",
-  "G4",
-  "A4",
+var escala_menor = [
+  "D3","E3","F3","G3","A3","B3","C4","D4","E4","F4","G4","A4",
 ];
-drumnotes = ["A1", "B1", "C2", "D2", "E2", "F2", "G2", "A2", "B2"];
 
-let oscWebSocket;
+var oscWebSocket;
+var initialized = false;
+
+// ── OSC message handling ───────────────────────────────────────────────────
 
 function parseOscMessage(oscMsg) {
   const addressParts = oscMsg.address.split("/");
-  const prefix = addressParts[1]; // "update", "client", "getState", etc.
-  
-  // Handle getState requests
-  if (prefix === "getState") {
-    const controllerId = oscMsg.args[0].value;
-    
-    // Send DC values for all neurons in correct order
-    let values = [];
-    if (NN && NN.neurons) {
-      for (let i = 0; i < NN.neurons.length; i++) {
-        const dcValue = settings["dc " + (i + 1)] || 0;
-        values.push({
-          type: "f",
-          value: dcValue,
-        });
-      }
+  const prefix = addressParts[1];
+
+  // ── /server/init — full network state from server ─────────────────────
+  if (prefix === "server" && addressParts[2] === "init") {
+    // args[0] = our clientId (string), args[1] = JSON blob
+    const jsonStr = oscMsg.args[1].value;
+    const initData = JSON.parse(jsonStr);
+    applyInitState(initData);
+    return;
+  }
+
+  // ── /server/voltages — per-tick voltage broadcast ─────────────────────
+  if (prefix === "server" && addressParts[2] === "voltages") {
+    for (let i = 0; i < oscMsg.args.length && i < n_neurons; i++) {
+      neuronVnorms[i] = oscMsg.args[i].value;
     }
-    oscWebSocket.send({
-      address: "/server/neurons/dc",
-      args: [
-        {
-          type: "s",
-          value: controllerId,
-        },
-        ...values,
-      ],
-    });
-    
-    // If admin panel is connecting, also send all weights and syn types
-    if (controllerId.startsWith('admin-')) {
-      // Send all syn types
-      if (NN && NN.neurons) {
-        for (let i = 0; i < NN.neurons.length; i++) {
-          oscWebSocket.send({
-            address: `/server/syntype/${i + 1}`,
-            args: [{ type: "f", value: NN.neurons[i].syn_type }],
-          });
-        }
+    return;
+  }
+
+  // ── /server/spike/{id} — neuron spike event ───────────────────────────
+  if (prefix === "server" && addressParts[2] === "spike") {
+    const neuronId = parseInt(addressParts[3], 10); // 1-based
+    if (neuronId >= 1 && neuronId <= n_neurons) {
+      neuronSpikes[neuronId - 1] = true;
+      // Trigger sound
+      if (voices[neuronId - 1]) {
+        voices[neuronId - 1].trigger();
       }
-      
-      // Send all weights
-      if (NN && NN.synapses) {
-        for (let k = 0; k < NN.synapses.length; k++) {
-          const S = NN.synapses[k];
-          oscWebSocket.send({
-            address: `/server/weight/${S.from.id + 1}/${S.to.id + 1}`,
-            args: [{ type: "f", value: S.weight }],
-          });
+      // Trigger visual pulses on all synapses FROM this neuron
+      if (networkData && networkData.synapses) {
+        for (let k = 0; k < networkData.synapses.length; k++) {
+          if (networkData.synapses[k].from === neuronId - 1) {
+            if (pulses[k]) pulses[k].add_event();
+          }
         }
       }
     }
     return;
   }
-  
-  // Handle both old /update/* and new /client/* formats
-  if (prefix === "update" || prefix === "client") {
-    // Check for path-based /client/{resource}/{id} format
-    if (prefix === "client" && addressParts.length >= 3) {
-      const resource = addressParts[2]; // "syntype", "weight", "drop", "neuron", "spike"
-      const value = oscMsg.args[0].value;
-      
-      // Handle /client/syntype/{id}
-      if (resource === "syntype" && addressParts[3]) {
-        const neuronId = parseInt(addressParts[3], 10);
-        const neuron = NN?.neurons?.[neuronId - 1];
-        if (neuron) {
-          neuron.syn_type = value >= 0 ? 1 : -1;
-          if (circles && circles[neuronId - 1]) {
-            circles[neuronId - 1].color = syn_colors[neuron.syn_type];
-          }
-          for (let k = 0; k < NN.synapses.length; k++) {
-            if (NN.synapses[k].from.id === neuronId - 1) {
-              pulses[k].set_syn_type(neuron.syn_type);
-            }
-          }
-        }
-        return;
-      }
-      
-      // Handle /client/weight/{from}/{to}
-      if (resource === "weight" && addressParts[3] && addressParts[4]) {
-        const fromId = parseInt(addressParts[3], 10) - 1;
-        const toId = parseInt(addressParts[4], 10) - 1;
-        for (let k = 0; k < NN.synapses.length; k++) {
-          const S = NN.synapses[k];
-          if (S.from.id === fromId && S.to.id === toId) {
-            S.set_weight(value);
-            if (nodeCon && nodeCon[k]) {
-              nodeCon[k][2] = value;
-            }
-            if (knobs && knobs[k]) {
-              knobs[k].set_value(map(value, 0, maxWeight, 0, 1));
-            }
-            break;
-          }
-        }
-        return;
-      }
-      
-      // Handle /client/drop/{from}/{to}
-      if (resource === "drop" && addressParts[3] && addressParts[4]) {
-        const fromId = parseInt(addressParts[3], 10) - 1;
-        const toId = parseInt(addressParts[4], 10) - 1;
-        for (let k = 0; k < NN.synapses.length; k++) {
-          const S = NN.synapses[k];
-          if (S.from.id === fromId && S.to.id === toId) {
-            S.drop = value >= 0.5;
-            break;
-          }
-        }
-        return;
-      }
+
+  // ── /server/neuron — DC update ────────────────────────────────────────
+  if (prefix === "server" && addressParts[2] === "neuron") {
+    const id = oscMsg.args?.[0]?.value;
+    const value = oscMsg.args?.[1]?.value;
+    if (typeof id === "number" && typeof value === "number") {
+      settings["dc " + id] = value;
     }
-    
-    const setting = addressParts[2];
-    
-    // Handle DC updates in two formats: /update/dc or /client/neuron
-    if (setting === "dc" || setting === "neuron") {
-      const id = oscMsg.args?.[0]?.value;
-      const value = oscMsg.args?.[1]?.value;
-      if (typeof id === "number" && typeof value === "number") {
-        settings["dc " + id] = value;
-      }
-      return;
-    }
-    
+    return;
+  }
+
+  // ── /server/weight/{from}/{to} — individual weight change ─────────────
+  if (prefix === "server" && addressParts[2] === "weight" && addressParts[3] && addressParts[4]) {
+    const fromId = parseInt(addressParts[3], 10) - 1;
+    const toId = parseInt(addressParts[4], 10) - 1;
     const value = oscMsg.args[0].value;
-    
-    // Handle spike trigger
-    if (/^spike \d+$/.test(setting) && value) {
-      const neuronId = parseInt(setting.split(" ")[1], 10);
-      const neuron = NN?.neurons?.[neuronId - 1];
-      if (neuron) {
-        neuron.V = neuron.maxV + 1;
-      }
-      return;
+    const key = fromId + "-" + toId;
+    const k = synapseMap[key];
+    if (k !== undefined) {
+      networkData.synapses[k].weight = value;
+      if (nodeCon[k]) nodeCon[k][2] = value;
+      if (knobs[k]) knobs[k].set_value(map(value, 0, maxWeight, 0, 1));
     }
-    
-    // Handle syn type per neuron
-    if (/^syn type \d+$/.test(setting)) {
-      const neuronId = parseInt(setting.split(" ")[2], 10);
-      const neuron = NN?.neurons?.[neuronId - 1];
-      if (neuron) {
-        neuron.syn_type = value >= 0 ? 1 : -1;
-        
-        // Update circle color
-        if (circles && circles[neuronId - 1]) {
-          circles[neuronId - 1].color = syn_colors[neuron.syn_type];
-        }
-        
-        // Update all pulses from this neuron
-        for (let k = 0; k < NN.synapses.length; k++) {
-          if (NN.synapses[k].from.id === neuronId - 1) {
-            pulses[k].set_syn_type(neuron.syn_type);
-          }
-        }
-      }
-      return;
+    return;
+  }
+
+  // ── /server/delay/{from}/{to} — individual delay change ───────────────
+  if (prefix === "server" && addressParts[2] === "delay" && addressParts[3] && addressParts[4]) {
+    const fromId = parseInt(addressParts[3], 10) - 1;
+    const toId = parseInt(addressParts[4], 10) - 1;
+    const value = oscMsg.args[0].value;
+    const key = fromId + "-" + toId;
+    const k = synapseMap[key];
+    if (k !== undefined) {
+      networkData.synapses[k].delay = value;
+      if (pulses[k]) pulses[k].set_delay(value);
     }
-    
-    // Handle weight updates
-    if (/^weight \d+ \d+$/.test(setting)) {
-      const parts = setting.split(" ");
-      const fromId = parseInt(parts[1], 10) - 1;
-      const toId = parseInt(parts[2], 10) - 1;
-      for (let k = 0; k < NN.synapses.length; k++) {
-        const S = NN.synapses[k];
-        if (S.from.id === fromId && S.to.id === toId) {
-          S.set_weight(value);
-          if (nodeCon && nodeCon[k]) {
-            nodeCon[k][2] = value;
-          }
-          if (knobs && knobs[k]) {
-            knobs[k].set_value(map(value, 0, maxWeight, 0, 1));
-          }
-          break;
+    return;
+  }
+
+  // ── /server/syntype/{id} — neuron syn type change ─────────────────────
+  if (prefix === "server" && addressParts[2] === "syntype" && addressParts[3]) {
+    const neuronId = parseInt(addressParts[3], 10);
+    const value = oscMsg.args[0].value;
+    if (networkData && networkData.neurons[neuronId - 1]) {
+      networkData.neurons[neuronId - 1].syn_type = value;
+      if (circles[neuronId - 1]) {
+        circles[neuronId - 1].color = syn_colors[value];
+      }
+      // Update pulse colors for synapses from this neuron
+      for (let k = 0; k < networkData.synapses.length; k++) {
+        if (networkData.synapses[k].from === neuronId - 1) {
+          if (pulses[k]) pulses[k].set_syn_type(value);
         }
       }
-      return;
     }
-    
-    // Handle drop updates
-    if (/^drop \d+ \d+$/.test(setting)) {
-      const parts = setting.split(" ");
-      const fromId = parseInt(parts[1], 10) - 1;
-      const toId = parseInt(parts[2], 10) - 1;
-      for (let k = 0; k < NN.synapses.length; k++) {
-        const S = NN.synapses[k];
-        if (S.from.id === fromId && S.to.id === toId) {
-          S.drop = value >= 0.5;
-          break;
-        }
-      }
-      return;
+    return;
+  }
+
+  // ── /server/drop/{from}/{to} — synapse drop change ────────────────────
+  if (prefix === "server" && addressParts[2] === "drop" && addressParts[3] && addressParts[4]) {
+    const fromId = parseInt(addressParts[3], 10) - 1;
+    const toId = parseInt(addressParts[4], 10) - 1;
+    const value = oscMsg.args[0].value;
+    const key = fromId + "-" + toId;
+    const k = synapseMap[key];
+    if (k !== undefined) {
+      networkData.synapses[k].drop = value >= 0.5;
     }
-    
-    // Handle weight mean/size - regenerate all weights
-    if (setting === "weight mean" || setting === "weight size") {
-      settings[setting] = value;
-      NN.set_random_weight(settings["weight mean"], settings["weight size"]);
-      weights_to_nodes(true);
-      broadcastWeights();
-      return;
-    }
-    
-    // Handle delay mean/size - regenerate all delays
-    if (setting === "delay mean" || setting === "delay size") {
-      settings[setting] = value;
-      NN.set_random_delay(settings["delay mean"], settings["delay size"]);
-      delay_to_pulses();
-      return;
-    }
-    
-    // Handle syn type proportion
-    if (setting === "syn type") {
-      settings[setting] = value;
-      NN.set_type_proportion(value);
-      broadcastSynTypes();
-      return;
-    }
-    
-    // Handle force updates
-    if (setting === "pulse force") {
-      settings[setting] = value;
-      return;
-    }
-    if (setting === "gravity force") {
+    return;
+  }
+
+  // ── Rendering / physics parameter changes ─────────────────────────────
+  if (prefix === "server") {
+    const setting = addressParts[2];
+    if (!setting) return;
+    const value = oscMsg.args?.[0]?.value;
+    if (value === undefined) return;
+
+    if (setting === "pulse_force" || setting === "pulse force") {
+      settings["pulse force"] = value;
+    } else if (setting === "gravity_force" || setting === "gravity force") {
       gravityConstant = value;
-      settings[setting] = value;
-      return;
-    }
-    if (setting === "repel force") {
+      settings["gravity force"] = value;
+    } else if (setting === "repel_force" || setting === "repel force") {
       forceConstantRepulsive = value;
-      settings[setting] = value;
-      return;
-    }
-    if (setting === "attract force") {
+      settings["repel force"] = value;
+    } else if (setting === "attract_force" || setting === "attract force") {
       forceConstantAttractive = value;
-      settings[setting] = value;
-      return;
-    }
-    
-    // Handle audio controls
-    if (setting === "audio volume") {
-      settings[setting] = value;
+      settings["attract force"] = value;
+    } else if (setting === "audio_volume" || setting === "audio volume") {
+      settings["audio volume"] = value;
       if (typeof Tone !== "undefined" && Tone.Destination) {
         Tone.Destination.volume.value = value;
       }
-      return;
-    }
-    if (setting === "audio mute") {
-      settings[setting] = value;
+    } else if (setting === "audio_mute" || setting === "audio mute") {
+      settings["audio mute"] = value;
       if (typeof Tone !== "undefined" && Tone.Destination) {
         Tone.Destination.mute = value > 0.5;
       }
-      return;
-    }
-    
-    // Handle show scopes toggle
-    if (setting === "show scopes") {
-      settings[setting] = value;
+    } else if (setting === "show_scopes" || setting === "show scopes") {
+      settings["show scopes"] = value;
       showScopes = value > 0.5;
       createScopes();
       updateNetLayout();
-      return;
+    } else if (setting === "circle_size" || setting === "circle size") {
+      settings["circle size"] = value;
+      for (let i = 0; i < circles.length; i++) {
+        circles[i].diameter = value;
+      }
+    } else {
+      // Generic setting storage
+      settings[setting.replace(/_/g, " ")] = value;
     }
-    
-    // Default: store the setting
-    settings[setting] = value;
     return;
   }
 }
 
+// ── Apply full init state from server ──────────────────────────────────────
+
+function applyInitState(initData) {
+  n_neurons = initData.numNeurons;
+  score_sep = (12 - n_neurons) * 5 + 60;
+  networkData = initData.network; // { neurons: [...], synapses: [...] }
+
+  // Merge settings
+  if (initData.settings) {
+    Object.assign(settings, initData.settings);
+    gravityConstant = settings["gravity force"] || 1;
+    forceConstantRepulsive = settings["repel force"] || 10000;
+    forceConstantAttractive = settings["attract force"] || 0.00005;
+    showScopes = (settings["show scopes"] || 0) > 0.5;
+  }
+
+  // Init per-neuron DC settings if missing
+  for (let i = 0; i < n_neurons; i++) {
+    if (settings["dc " + (i + 1)] === undefined) {
+      settings["dc " + (i + 1)] = 0;
+    }
+  }
+
+  // Build synapse lookup map
+  synapseMap = {};
+  numSynapses = networkData.synapses.length;
+  for (let k = 0; k < numSynapses; k++) {
+    const s = networkData.synapses[k];
+    synapseMap[s.from + "-" + s.to] = k;
+  }
+
+  // Init voltage / spike arrays
+  neuronVnorms = new Array(n_neurons).fill(0);
+  neuronSpikes = new Array(n_neurons).fill(false);
+
+  // Build visual structures
+  createNodes();
+  createCircles();
+  createPulsesAndKnobs();
+  createScopes();
+  updateNetLayout();
+
+  initialized = true;
+  console.log(`Visual client initialised: ${n_neurons} neurons, ${numSynapses} synapses`);
+}
+
+// ── p5.js setup ────────────────────────────────────────────────────────────
+
 function setup() {
+  createCanvas(windowWidth, windowHeight);
+
+  syn_colors = {
+    "-1": color(
+      synapseInhibitoryColor[0],
+      synapseInhibitoryColor[1],
+      synapseInhibitoryColor[2],
+    ),
+    1: color(
+      synapseExcitatoryColor[0],
+      synapseExcitatoryColor[1],
+      synapseExcitatoryColor[2],
+    ),
+  };
+
+  score_sep = (12 - n_neurons) * 5 + 60;
+  updateNetLayout();
+  frameRate(frame_rate);
+
+  // Connect to server via WebSocket
   fetch("/api/config")
     .then((r) => r.json())
     .then((cfg) => {
@@ -384,15 +337,20 @@ function setup() {
         console.log("WebSocket ready");
       });
 
-      oscWebSocket.on("open", function (err) {
+      oscWebSocket.on("open", function () {
+        // Register as a visual client (not a simulation!)
         oscWebSocket.send({
-          address: "/registerSimulation",
-          args: [],
+          address: "/registerVisual",
+          args: [
+            {
+              type: "s",
+              value: "visual-" + Math.random().toString(36).substring(2, 8),
+            },
+          ],
         });
       });
 
       oscWebSocket.on("message", function (oscMsg) {
-        //console.log(oscMsg);
         parseOscMessage(oscMsg);
       });
 
@@ -401,45 +359,16 @@ function setup() {
     .catch((err) => {
       console.error("Error loading configuration", err);
     });
-
-  createCanvas(windowWidth, windowHeight);
-  updateNetLayout();
-  syn_colors = {
-    "-1": color(
-      synapseInhibitoryColor[0],
-      synapseInhibitoryColor[1],
-      synapseInhibitoryColor[2],
-    ),
-    1: color(
-      synapseExcitatoryColor[0],
-      synapseExcitatoryColor[1],
-      synapseExcitatoryColor[2],
-    ),
-  };
-
-  NN = new NeuralNetwork();
-  NN.add_neurons(n_neurons);
-  NN.add_all_synapses();
-
-  NN.set_random_weight(settings["weight mean"], settings["weight size"]);
-  NN.set_random_delay(settings["delay mean"], settings["delay size"]);
-  NN.set_dropout(settings["dropout"]);
-  NN.set_type_proportion(settings["syn type"]);
-
-  createNodes();
-  createCircles();
-  createPulsesAndKnobs();
-  createScopes();
-  windowResized();
-  frameRate(frame_rate);
 }
+
+// ── Visual structure creation ──────────────────────────────────────────────
 
 function createNodes() {
   nodes = [];
   for (let i = 0; i < n_neurons; i++) {
     let x = random(-width * 0.25, width * 0.25);
     let y = random(-height * 0.25, height * 0.25);
-    node = new Node(createVector(x, y), mass);
+    let node = new Node(createVector(x, y), mass);
     nodes.push(node);
   }
   closeNode = nodes[0];
@@ -447,30 +376,22 @@ function createNodes() {
 
 function createCircles() {
   circles = [];
+  voices = [];
   for (let i = 0; i < n_neurons; i++) {
+    // Audio voice
+    let nota;
     if (i < escala_mayor.length) nota = escala_mayor[i];
     else nota = escala_mayor[0];
     let voice = new Voice(nota, 1 / 16, casio);
-    NN.neurons[i].set_event_callback(function () {
-      voice.trigger();
-      // Send OSC messages when neuron spikes
-      if (oscWebSocket) {
-        // Send /pulse for external OSC forwarding
-        oscWebSocket.send({
-          address: `/pulse`,
-          args: [{ type: "i", value: i + 1 }]
-        });
-        // Send /server/spike to all connected clients
-        oscWebSocket.send({
-          address: `/server/spike/${i + 1}`,
-          args: []
-        });
-      }
-    });
     voices.push(voice);
+
+    // Visual circle
     let circle = new Circle(nodes[i].pos, settings["circle size"]);
+    // Set color from network data
+    if (networkData && networkData.neurons[i]) {
+      circle.color = syn_colors[networkData.neurons[i].syn_type];
+    }
     circles.push(circle);
-    settings["dc " + (i + 1)] = 0;
   }
 }
 
@@ -478,16 +399,16 @@ function createScopes() {
   scopes = [];
   scores = [];
   if (!showScopes) return;
-  for (let i = 0; i < NN.neurons.length; i++) {
-    let y = -i * score_sep + ((NN.neurons.length - 1) * score_sep) / 2;
-    scope = new Scope(
+  for (let i = 0; i < n_neurons; i++) {
+    let y = -i * score_sep + ((n_neurons - 1) * score_sep) / 2;
+    let scope = new Scope(
       -width / 2 + net_score_border,
       y,
       width - net_score_border - marginx,
       40,
     );
     scopes.push(scope);
-    score = new Score(
+    let score = new Score(
       -width / 2 + net_score_border,
       y,
       width - net_score_border - marginx,
@@ -511,11 +432,15 @@ function createPulsesAndKnobs() {
   pulses = [];
   nodeCon = [];
   knobs = [];
-  for (let k = 0; k < NN.synapses.length; k++) {
-    let S = NN.synapses[k];
-    i = S.from.id;
-    j = S.to.id;
-    syn_type = NN.neurons[i].syn_type;
+
+  if (!networkData) return;
+
+  for (let k = 0; k < networkData.synapses.length; k++) {
+    const S = networkData.synapses[k];
+    const i = S.from;
+    const j = S.to;
+    const syn_type = networkData.neurons[i].syn_type;
+
     let pulse = new Pulse(
       circles[i].position,
       circles[j].position,
@@ -525,12 +450,9 @@ function createPulsesAndKnobs() {
       j,
     );
     pulse.set_arrival_callback(handlePulseArrival);
-    S.set_event_callback(pulse.add_event.bind(pulse));
     pulses.push(pulse);
     nodeCon.push([i, j, S.weight]);
 
-    // let y = NN.neurons.length - j + 1
-    // let x = -i + (NN.neurons.length - 1) * 0.5
     let x = i;
     let y = j;
     let knob = new Knob(
@@ -539,10 +461,20 @@ function createPulsesAndKnobs() {
       knobR,
       0,
     );
+    knob.set_value(map(S.weight, 0, maxWeight, 0, 1));
     knob.set_callback(function (v) {
       if (v < 0.01) v = 0;
-      S.set_weight(v * maxWeight);
-      weights_to_nodes(false);
+      const newWeight = v * maxWeight;
+      // Send weight change to server
+      if (oscWebSocket) {
+        oscWebSocket.send({
+          address: `/client/weight/${i + 1}/${j + 1}`,
+          args: [{ type: "f", value: newWeight }],
+        });
+      }
+      // Update local immediately for responsive UI
+      S.weight = newWeight;
+      nodeCon[k][2] = newWeight;
     });
     knobs.push(knob);
   }
@@ -558,179 +490,106 @@ function handlePulseArrival(fromId, toId, size) {
   nodes[toId].impulse.add(impulse);
 }
 
-function saveNetwork() {
-  let network = {
-    neurons: [],
-    synapses: [],
-  };
-  for (const neuron of NN.neurons) {
-    network.neurons.push({
-      id: neuron.id,
-      syn_type: neuron.syn_type,
-    });
-  }
-  for (const synapse of NN.synapses) {
-    network.synapses.push({
-      from: synapse.from.id,
-      to: synapse.to.id,
-      weight: synapse.weight,
-      delay: synapse.delay,
-      drop: synapse.drop,
-    });
-  }
-  return btoa(JSON.stringify(network));
-}
-
-function loadNetwork(encodedNetwork) {
-  settings = defaultSettings();
-  const network = JSON.parse(atob(encodedNetwork));
-  n_neurons = network.neurons.length;
-  NN = new NeuralNetwork();
-  NN.add_neurons(network.neurons.length);
-  NN.add_all_synapses();
-  for (let i = 0; i < network.neurons.length; i++) {
-    NN.neurons[i].id = network.neurons[i].id;
-    NN.neurons[i].syn_type = network.neurons[i].syn_type;
-    settings["dc " + (i + 1)] = 0;
-  }
-  for (let i = 0; i < network.synapses.length; i++) {
-    NN.synapses[i].set_weight(network.synapses[i].weight);
-    NN.synapses[i].set_delay(network.synapses[i].delay);
-    NN.synapses[i].drop = network.synapses[i].drop;
-  }
-
-  createNodes();
-  createCircles();
-  createPulsesAndKnobs();
-  createScopes();
-}
+// ── Draw loop ──────────────────────────────────────────────────────────────
 
 function draw() {
-  background(backgroundColor[0], backgroundColor[1], backgroundColor[2]);
+  if (!initialized) {
+    background(backgroundColor[0], backgroundColor[1], backgroundColor[2]);
+    // Show waiting text
+    fill(200);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(16);
+    text("Connecting to simulation server…", width / 2, height / 2);
+    return;
+  }
 
+  background(backgroundColor[0], backgroundColor[1], backgroundColor[2]);
   translate(width / 2, height / 2);
 
+  // Physics forces (visual only)
   applyForces(nodes);
+  nodes.forEach((node) => node.update());
 
-  nodes.forEach((node) => {
-    node.update();
-  });
-
-  if (clicked == true && closeNode) {
+  // Dragging interaction
+  if (clicked && closeNode) {
     let mousePos = createVector(
       mouseX - width / 2 - net_offset_x,
       mouseY - height / 2 - net_offset_y,
     );
     closeNode.pos.lerp(mousePos, lerpValue);
-    if (lerpValue < 0.95) {
-      lerpValue += 0.02;
-    }
+    if (lerpValue < 0.95) lerpValue += 0.02;
   }
 
-  for (let i = 0; i < NN.neurons.length; i++) {
-    NN.neurons[i].dc = settings["dc " + (i + 1)];
-    NN.neurons[i].noise = settings["noise"];
-  }
-
-  NN.update();
-
-  for (let k = 0; k < NN.synapses.length; k++) {
-    let wnorm = map(NN.synapses[k].weight, 0, maxWeight, 0, 10);
-    // console.log(NN.synapses[k].weight, wnorm)
-    wnorm = wnorm * !NN.synapses[k].drop;
+  // Draw synapse lines
+  for (let k = 0; k < numSynapses; k++) {
+    const S = networkData.synapses[k];
+    let wnorm = map(S.weight, 0, maxWeight, 0, 10);
+    wnorm = wnorm * !S.drop;
     pulses[k].draw_line(Math.sqrt(wnorm) * 2);
   }
-  for (let i = 0; i < NN.neurons.length; i++) {
-    circles[i].draw(NN.neurons[i].Vnorm);
-    if (showScopes) {
-      if (NN.neurons[i].spike_event) scopes[i].draw(1);
-      else scopes[i].draw(NN.neurons[i].Vnorm);
-      scores[i].draw(NN.neurons[i].spike_event);
+
+  // Draw neuron circles using voltages from server
+  for (let i = 0; i < n_neurons; i++) {
+    circles[i].draw(neuronVnorms[i]);
+    if (showScopes && scopes[i]) {
+      if (neuronSpikes[i]) scopes[i].draw(1);
+      else scopes[i].draw(neuronVnorms[i]);
+      scores[i].draw(neuronSpikes[i]);
     }
   }
-  for (let k = 0; k < NN.synapses.length; k++) {
-    let wnorm = map(NN.synapses[k].weight, 0, maxWeight, 0, 10);
-    wnorm = wnorm * !NN.synapses[k].drop;
+
+  // Draw pulses
+  for (let k = 0; k < numSynapses; k++) {
+    const S = networkData.synapses[k];
+    let wnorm = map(S.weight, 0, maxWeight, 0, 10);
+    wnorm = wnorm * !S.drop;
     pulses[k].draw(wnorm);
   }
-  for (let k = 0; k < NN.synapses.length; k++) {
+
+  // Draw knobs
+  for (let k = 0; k < knobs.length; k++) {
     knobs[k].draw(mouseX - windowWidth / 2, mouseY - height / 2);
   }
 
   translate(-windowWidth / 2, -height / 2);
-}
 
-function weights_to_nodes(propagate) {
-  for (let k = 0; k < NN.synapses.length; k++) {
-    let S = NN.synapses[k];
-    nodeCon[k][2] = S.weight;
-    if (propagate) knobs[k].set_value(map(S.weight, 0, maxWeight, 0, 1));
+  // Clear spike flags after rendering this frame
+  for (let i = 0; i < n_neurons; i++) {
+    neuronSpikes[i] = false;
   }
 }
 
-function broadcastWeights() {
-  if (!oscWebSocket || !NN) return;
-  for (let k = 0; k < NN.synapses.length; k++) {
-    const S = NN.synapses[k];
-    oscWebSocket.send({
-      address: `/server/weight/${S.from.id + 1}/${S.to.id + 1}`,
-      args: [{ type: "f", value: S.weight }],
-    });
-  }
-}
-
-function broadcastSynTypes() {
-  if (!oscWebSocket || !NN) return;
-  for (let i = 0; i < NN.neurons.length; i++) {
-    const neuron = NN.neurons[i];
-    oscWebSocket.send({
-      address: `/server/syntype/${neuron.id + 1}`,
-      args: [{ type: "f", value: neuron.syn_type }],
-    });
-  }
-}
-
-function delay_to_pulses() {
-  for (let k = 0; k < NN.synapses.length; k++) {
-    let S = NN.synapses[k];
-    delay = S.delay;
-    pulses[k].set_delay(delay);
-  }
-}
+// ── Interaction ────────────────────────────────────────────────────────────
 
 function mouseReleased() {
   clicked = false;
-  for (let k = 0; k < NN.synapses.length; k++) {
+  for (let k = 0; k < knobs.length; k++) {
     knobs[k].mouseReleased();
   }
 }
 
 function touchStarted() {
-  if (clicked == true) {
+  if (clicked) {
     clicked = false;
     lerpValue = 0.2;
   } else {
     clicked = true;
-    // let mousePos = createVector(mouseX - width / 2, mouseY - height / 2)
     let mousePos = createVector(
       mouseX - width / 2 - net_offset_x,
       mouseY - height / 2 - net_offset_y,
     );
-
-    let i = 0;
     closeNode = null;
-    nodes.forEach((node) => {
+    for (let i = 0; i < nodes.length; i++) {
       if (
-        dist(node.pos.x, node.pos.y, mousePos.x, mousePos.y) <
+        dist(nodes[i].pos.x, nodes[i].pos.y, mousePos.x, mousePos.y) <
         circles[i].diameter / 2
       ) {
-        closeNode = node;
+        closeNode = nodes[i];
       }
-      i++;
-    });
+    }
   }
-  for (let k = 0; k < NN.synapses.length; k++) {
-    let mousePos = createVector(mouseX - width / 2, mouseY - height / 2);
+  for (let k = 0; k < knobs.length; k++) {
     knobs[k].mousePressed(mouseX - width / 2, mouseY - height / 2);
   }
 }
@@ -738,10 +597,6 @@ function touchStarted() {
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
   updateNetLayout();
-  for (let i = 0; i < NN.neurons.length; i++) {
-    // scopes[i].width = windowWidth;
-    // scopes[i].height = windowHeight / NN.neurons.length;
-  }
 }
 
 document.documentElement.addEventListener("mousedown", function () {

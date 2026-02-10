@@ -238,7 +238,7 @@ function createNeuronControlElements() {
   const pulseButton = new CircleButton(buttonX, buttonY, buttonRadius, () => {
     if (assignedNeuronId) {
       const oscMessage = {
-        address: `/client/spike ${assignedNeuronId}`,
+        address: `/client/pulse/${assignedNeuronId}`,
         args: [
           {
             type: "f",
