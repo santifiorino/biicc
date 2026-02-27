@@ -54,10 +54,14 @@ function handleDisconnect(message) {
     noLoop();
     const canvas = document.querySelector('canvas');
     if (canvas) canvas.style.display = 'none';
+    document.body.style.background = '#000';
+    document.body.style.margin = '0';
+    document.documentElement.style.background = '#000';
+    document.documentElement.style.margin = '0';
     
     // Show disconnect message
     const messageDiv = document.createElement('div');
-    messageDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #111; border: 2px solid #ff0000; padding: 30px; border-radius: 10px; color: #ff0000; font-size: 18px; text-align: center; z-index: 10000;';
+    messageDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80vw; max-width: 900px; background: #000; border: 2px solid #fff; border-radius: 12px; color: #fff; font-family: sans-serif; font-size: clamp(24px, 6.5vw, 38px); font-weight: 700; line-height: 1.35; text-align: center; white-space: pre-line; padding: 24px; word-break: break-word; z-index: 10000;';
     messageDiv.textContent = message;
     document.body.appendChild(messageDiv);
 }

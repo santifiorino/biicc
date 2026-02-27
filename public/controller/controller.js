@@ -12,30 +12,63 @@ let neuronIds = []; // ids of the neurons that are being controlled
 let initialized = false;
 let assignedNeuronId = null; // 1-based neuron id assigned by backend
 let hasState = false;
+let neuronSynTypes = {};
+
+function synTypeToColor(synType) {
+  return synType >= 0 ? [0, 255, 0] : [255, 0, 0];
+}
+
+function getAssignedColor() {
+  const synType = neuronSynTypes[assignedNeuronId] ?? 1;
+  return synTypeToColor(synType);
+}
+
+function applyAssignedColorToUI() {
+  if (!assignedNeuronId || neuronControlElements.length === 0) return;
+  const rgb = getAssignedColor();
+  for (const textEl of neuronExplanationTexts) {
+    if (textEl) {
+      textEl.color = color(rgb[0], rgb[1], rgb[2]);
+    }
+  }
+  for (const controlElement of neuronControlElements) {
+    if (controlElement && Object.prototype.hasOwnProperty.call(controlElement, "accentColor")) {
+      controlElement.accentColor = rgb;
+    }
+  }
+}
 
 function handleDisconnect(message) {
   // Hide all controls
   noLoop(); // Stop p5.js draw loop
   const canvas = document.querySelector('canvas');
   if (canvas) canvas.style.display = 'none';
+  document.body.style.background = '#000';
+  document.body.style.margin = '0';
+  document.documentElement.style.background = '#000';
+  document.documentElement.style.margin = '0';
   
-  // Show disconnect message - full screen, same background as canvas
+  // Show disconnect message
   const messageDiv = document.createElement('div');
   messageDiv.style.cssText = `
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80vw;
+    max-width: 900px;
     background: #000;
+    border: 2px solid #fff;
+    border-radius: 12px;
     color: #fff;
-    font-family: 'Courier New', monospace;
-    font-size: 18px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    font-family: sans-serif;
+    font-size: clamp(24px, 6.5vw, 38px);
+    font-weight: 700;
+    line-height: 1.35;
     text-align: center;
-    padding: 20px;
+    white-space: pre-line;
+    padding: 24px;
+    word-break: break-word;
     z-index: 10000;
   `;
   messageDiv.textContent = message;
@@ -75,6 +108,16 @@ function parseOscMessage(oscMsg) {
         hasState = true;
         maybeCreateUI();
       }
+      else if (addressParts[2] === "syntype" && addressParts[3]) {
+        const neuronId = parseInt(addressParts[3], 10);
+        const value = oscMsg.args?.[0]?.value;
+        if (Number.isFinite(neuronId) && typeof value === "number") {
+          neuronSynTypes[neuronId] = value >= 0 ? 1 : -1;
+          if (assignedNeuronId === neuronId) {
+            applyAssignedColorToUI();
+          }
+        }
+      }
       break;
     case "assignment":
       if (addressParts[2] === "neuron") {
@@ -82,6 +125,7 @@ function parseOscMessage(oscMsg) {
         if (typeof value === "number" && value >= 1) {
           assignedNeuronId = value;
           maybeCreateUI();
+          applyAssignedColorToUI();
         }
       }
       break;
@@ -116,12 +160,25 @@ function setup() {
       if (!data.allowed) {
         const msg = document.createElement("div");
         msg.textContent =
-          "Maximum number of controllers reached. Please try again later.";
+          "Máximo número de controladores alcanzado. Intenta reconectar más tarde.";
+        msg.style.position = "fixed";
+        msg.style.top = "50%";
+        msg.style.left = "50%";
+        msg.style.transform = "translate(-50%, -50%)";
+        msg.style.width = "80vw";
+        msg.style.maxWidth = "900px";
+        msg.style.background = "#111";
+        msg.style.border = "2px solid #fff";
+        msg.style.borderRadius = "12px";
         msg.style.color = "#fff";
         msg.style.fontFamily = "sans-serif";
-        msg.style.fontSize = "20px";
+        msg.style.fontSize = "clamp(24px, 6.5vw, 38px)";
+        msg.style.fontWeight = "700";
+        msg.style.lineHeight = "1.35";
         msg.style.textAlign = "center";
-        msg.style.marginTop = "20vh";
+        msg.style.padding = "24px";
+        msg.style.wordBreak = "break-word";
+        msg.style.whiteSpace = "pre-line";
         document.body.style.background = "#010101";
         document.body.appendChild(msg);
         noLoop(); // prevent draw from running
@@ -156,7 +213,7 @@ function setup() {
         })
         .catch((err) => {
           const msg = document.createElement("div");
-          msg.textContent = "Error loading configuration. Please try again.";
+          msg.textContent = "Error cargando la configuración. Intenta nuevamente.";
           msg.style.color = "#fff";
           msg.style.fontFamily = "sans-serif";
           msg.style.fontSize = "20px";
@@ -250,6 +307,7 @@ function createNeuronControlElements() {
     }
   });
   neuronControlElements.push(pulseButton);
+  applyAssignedColorToUI();
   yPos = buttonY + buttonRadius + 20;
   let pad = new Pad(
     settings["dc 1"],

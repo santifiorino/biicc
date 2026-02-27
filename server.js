@@ -53,7 +53,11 @@ for (let i = 0; i < args.length; i++) {
 
 // ── Load configuration ─────────────────────────────────────────────────────
 
-let config = { maxControllers: 4, wsUrl: "ws://localhost:9000" };
+let config = {
+  maxControllers: 4,
+  wsUrl: "ws://localhost:9000",
+  controllerAssignmentMode: "sequential",
+};
 try {
   const configPath = path.join(__dirname, "config.json");
   if (fs.existsSync(configPath)) {
@@ -64,6 +68,16 @@ try {
     }
     if (parsed && typeof parsed.wsUrl === "string" && parsed.wsUrl.length > 0) {
       config.wsUrl = parsed.wsUrl;
+    }
+    if (
+      parsed &&
+      typeof parsed.controllerAssignmentMode === "string" &&
+      ["sequential", "random"].includes(
+        parsed.controllerAssignmentMode.toLowerCase(),
+      )
+    ) {
+      config.controllerAssignmentMode =
+        parsed.controllerAssignmentMode.toLowerCase();
     }
     if (parsed && parsed.oscForward) {
       config.oscForward = parsed.oscForward;
@@ -179,11 +193,19 @@ function assignNeuronToController(controllerId) {
   for (let i = 0; i < sim.numNeurons; i++) {
     if (neuronLoad[i] < minLoad) minLoad = neuronLoad[i];
   }
-  let chosen = 0;
+  const candidates = [];
   for (let i = 0; i < sim.numNeurons; i++) {
     if (neuronLoad[i] === minLoad) {
-      chosen = i;
-      break;
+      candidates.push(i);
+    }
+  }
+  let chosen = 0;
+  if (candidates.length > 0) {
+    if (config.controllerAssignmentMode === "random") {
+      const randomIndex = Math.floor(Math.random() * candidates.length);
+      chosen = candidates[randomIndex];
+    } else {
+      chosen = candidates[0];
     }
   }
   neuronLoad[chosen] += 1;
@@ -224,6 +246,22 @@ function sendOscTo(ws, msg) {
   }
 }
 
+function rejectWsConnection(ws, reason) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(
+        osc.writePacket({
+          address: "/disconnect",
+          args: [{ type: "s", value: reason }],
+        }),
+      );
+    } catch (_) {}
+  }
+  try {
+    ws.close();
+  } catch (_) {}
+}
+
 /**
  * Send an OSC message to every connected client (controllers + admins +
  * visual clients), optionally excluding one sender.
@@ -233,19 +271,19 @@ function broadcastToAll(msg, excludeWs) {
   for (const id of Object.keys(controllers)) {
     const ws = controllers[id];
     if (ws !== excludeWs && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(packet); } catch (_) {}
+      try { ws.send(packet); } catch (_) { }
     }
   }
   for (const id of Object.keys(adminPanels)) {
     const ws = adminPanels[id];
     if (ws !== excludeWs && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(packet); } catch (_) {}
+      try { ws.send(packet); } catch (_) { }
     }
   }
   for (const id of Object.keys(visualClients)) {
     const ws = visualClients[id];
     if (ws !== excludeWs && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(packet); } catch (_) {}
+      try { ws.send(packet); } catch (_) { }
     }
   }
 }
@@ -255,7 +293,7 @@ function broadcastToVisuals(msg) {
   for (const id of Object.keys(visualClients)) {
     const ws = visualClients[id];
     if (ws && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(packet); } catch (_) {}
+      try { ws.send(packet); } catch (_) { }
     }
   }
 }
@@ -382,6 +420,8 @@ app.get("/api/clients", (req, res) => {
   });
 });
 
+const disconnection_string = "Desconectado por el servidor. \nEspera un minuto antes de recargar.";
+
 app.delete("/api/clients/:id", (req, res) => {
   const clientId = req.params.id;
 
@@ -394,13 +434,12 @@ app.delete("/api/clients/:id", (req, res) => {
           args: [
             {
               type: "s",
-              value:
-                "Desconectado por el servidor. Espera un minuto antes de recargar.",
+              value: disconnection_string,
             },
           ],
         }),
       );
-    } catch (_) {}
+    } catch (_) { }
     ws.close();
     freeAssignmentFor(clientId);
     delete controllers[clientId];
@@ -417,13 +456,12 @@ app.delete("/api/clients/:id", (req, res) => {
           args: [
             {
               type: "s",
-              value:
-                "Desconectado por el servidor. Espera un minuto antes de recargar.",
+              value: disconnection_string,
             },
           ],
         }),
       );
-    } catch (_) {}
+    } catch (_) { }
     ws.close();
     delete adminPanels[clientId];
     delete clientActivity[clientId];
@@ -511,7 +549,7 @@ wss.on("connection", (ws) => {
             args: [{ type: "s", value: activeClientId }],
           }),
         );
-      } catch (_) {}
+      } catch (_) { }
     }
 
     // ── Route by prefix ─────────────────────────────────────────────────
@@ -592,6 +630,10 @@ wss.on("connection", (ws) => {
           console.log(
             `Connection denied for controller ${controllerId}: capacity (${current}/${max})`,
           );
+          rejectWsConnection(
+            ws,
+            "Máximo número de controladores alcanzado. Intenta reconectar más tarde.",
+          );
           return;
         }
         controllers[controllerId] = ws;
@@ -618,6 +660,16 @@ wss.on("connection", (ws) => {
       case "update":
       case "client": {
         const senderId = controllerWs2Id(ws) || adminWs2Id(ws);
+        if (!senderId) {
+          console.log(
+            `Ignoring ${prefix} from unregistered socket: ${oscMsg.address}`,
+          );
+          rejectWsConnection(
+            ws,
+            "Conexión no registrada. Recarga el controlador e inténtalo de nuevo.",
+          );
+          return;
+        }
         console.log(`${prefix}`, oscMsg.address, JSON.stringify(oscMsg.args));
 
         // Apply to server-side simulation — get back broadcast messages
@@ -657,7 +709,7 @@ wss.on("connection", (ws) => {
       // ── Pulse from external / legacy ──────────────────────────────────
       case "pulse": {
         if (oscUdpPort) {
-          try { oscUdpPort.send(oscMsg); } catch (_) {}
+          try { oscUdpPort.send(oscMsg); } catch (_) { }
         }
         break;
       }
@@ -747,6 +799,6 @@ function notifyMonitorDisconnect(clientId) {
           args: [{ type: "s", value: clientId }],
         }),
       );
-    } catch (_) {}
+    } catch (_) { }
   }
 }

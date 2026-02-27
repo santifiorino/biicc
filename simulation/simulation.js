@@ -601,6 +601,13 @@ class SimulationRunner extends EventEmitter {
     }
     msgs.push({ address: "/server/neurons/dc", args: dcArgs });
 
+    for (let i = 0; i < this.NN.neurons.length; i++) {
+      msgs.push({
+        address: `/server/syntype/${i + 1}`,
+        args: [{ type: "f", value: this.NN.neurons[i].syn_type }],
+      });
+    }
+
     // 3. If it's an admin, also send all weights & syn types individually
     if (clientId.startsWith("admin-")) {
       // Send current setting values so admin sliders initialise correctly
@@ -628,12 +635,6 @@ class SimulationRunner extends EventEmitter {
         args: [{ type: "s", value: JSON.stringify(this.settings["drop order"]) }],
       });
 
-      for (let i = 0; i < this.NN.neurons.length; i++) {
-        msgs.push({
-          address: `/server/syntype/${i + 1}`,
-          args: [{ type: "f", value: this.NN.neurons[i].syn_type }],
-        });
-      }
       for (const S of this.NN.synapses) {
         msgs.push({
           address: `/server/weight/${S.from.id + 1}/${S.to.id + 1}`,

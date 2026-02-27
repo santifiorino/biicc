@@ -122,12 +122,13 @@ class VerticalSlider extends SliderElement {
     this.min = min;
     this.max = max;
     this.onChange = onChange;
+    this.accentColor = [255, 255, 255];
   }
 
   draw() {
     push();
     // Outer pill-shaped track (white outline, no fill)
-    stroke(255);
+    stroke(...this.accentColor);
     strokeWeight(3);
     noFill();
     const radius = this.w / 2;
@@ -147,7 +148,7 @@ class VerticalSlider extends SliderElement {
     const barW = Math.max(6, Math.floor(this.w * 0.18));
     const barX = centerX - barW / 2;
     noStroke();
-    fill(255);
+    fill(...this.accentColor);
     rect(barX, handleY, barW, innerBottom - handleY, barW / 2);
 
     // Circular knob (always inside track, with margin)
@@ -394,6 +395,7 @@ class CircleButton {
     this.pressed = false;
     this.activeUntilMs = 0; // visual feedback timeout
     this.feedbackMs = 200;
+    this.accentColor = [255, 255, 255];
   }
 
   draw() {
@@ -404,12 +406,12 @@ class CircleButton {
         : Date.now(); /* fallback, unit mismatch is fine for visuals */
     const isActive = now < this.activeUntilMs;
     if (isActive) {
-      stroke(255);
+      stroke(...this.accentColor);
       strokeWeight(3);
       fill(0);
     } else {
       noStroke();
-      fill(255);
+      fill(...this.accentColor);
     }
     const remaining = Math.max(0, this.activeUntilMs - now);
     const scale =

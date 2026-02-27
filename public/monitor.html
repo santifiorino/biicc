@@ -45,6 +45,61 @@
             margin-bottom: 20px;
         }
 
+        .panel-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .auto-remove-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #bbb;
+            font-size: 12px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .auto-remove-controls label {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .auto-remove-controls input[type="number"] {
+            width: 72px;
+            background: #111;
+            color: #fff;
+            border: 1px solid #666;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-family: inherit;
+            font-size: 12px;
+        }
+
+        .disconnect-all-btn {
+            background: #fff;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            padding: 4px 10px;
+            font-family: inherit;
+            font-size: 12px;
+            line-height: 1.2;
+        }
+
+        .disconnect-all-btn:hover {
+            background: #ccc;
+        }
+
+        .disconnect-all-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .clients-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -89,13 +144,13 @@
             box-shadow: 0 0 10px #fff;
         }
 
-        .client-id {
+        .client-name {
             font-weight: bold;
             font-size: 14px;
             color: #fff;
         }
 
-        .client-type {
+        .client-id {
             color: #888;
             font-size: 12px;
         }
@@ -196,6 +251,15 @@
             .osc-docs {
                 grid-template-columns: 1fr;
             }
+
+            .panel-top {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .auto-remove-controls {
+                justify-content: flex-start;
+            }
         }
     </style>
 </head>
@@ -204,7 +268,17 @@
         <h1>SNN Server Monitor</h1>
 
         <div class="panel">
-            <h2>Connected Clients</h2>
+            <div class="panel-top">
+                <h2>Connected Clients</h2>
+                <div class="auto-remove-controls">
+                    <button id="disconnectAllControllersBtn" class="disconnect-all-btn" type="button">Disconnect Controllers</button>
+                    <label>
+                        <input type="checkbox" id="autoRemoveToggle" />
+                        Auto remove (min)
+                    </label>                    
+                    <input type="number" id="autoRemoveMinutes" min="1" step="1" value="1" />
+                </div>
+            </div>
             <div class="stats">
                 <div class="stat-item">
                     <span>Total:</span>
@@ -263,12 +337,127 @@
         let clients = {};
         let prevClients = {}; // Track previous state to detect changes
         let activityTimers = {};
+        let clientFirstSeen = {};
+        let pendingAutoDisconnect = {};
+        let autoRemoveEnabled = false;
+        let autoRemoveMinutes = 1;
 
         function init() {
+            bindAutoRemoveControls();
             renderOscDocs();
             updateClients();
             setInterval(updateClients, 1000); // Less frequent polling now that we have WebSocket
             connectWebSocket();
+        }
+
+        function bindAutoRemoveControls() {
+            const toggleEl = document.getElementById('autoRemoveToggle');
+            const minutesEl = document.getElementById('autoRemoveMinutes');
+            const disconnectAllBtn = document.getElementById('disconnectAllControllersBtn');
+
+            autoRemoveEnabled = localStorage.getItem('monitor.autoRemoveEnabled') === 'true';
+            const savedMinutes = parseInt(localStorage.getItem('monitor.autoRemoveMinutes') || '1', 10);
+            autoRemoveMinutes = Number.isFinite(savedMinutes) && savedMinutes > 0 ? savedMinutes : 1;
+
+            toggleEl.checked = autoRemoveEnabled;
+            minutesEl.value = String(autoRemoveMinutes);
+
+            toggleEl.addEventListener('change', () => {
+                autoRemoveEnabled = !!toggleEl.checked;
+                localStorage.setItem('monitor.autoRemoveEnabled', String(autoRemoveEnabled));
+                if (autoRemoveEnabled) {
+                    console.log(`[AutoRemove] ON (max_time=${autoRemoveMinutes} min)`);
+                    processAutoRemove();
+                } else {
+                    console.log('[AutoRemove] OFF');
+                }
+            });
+
+            minutesEl.addEventListener('change', () => {
+                const parsed = parseInt(minutesEl.value, 10);
+                autoRemoveMinutes = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+                minutesEl.value = String(autoRemoveMinutes);
+                localStorage.setItem('monitor.autoRemoveMinutes', String(autoRemoveMinutes));
+                if (autoRemoveEnabled) {
+                    console.log(`[AutoRemove] max_time updated: ${autoRemoveMinutes} min`);
+                    processAutoRemove();
+                }
+            });
+
+            if (autoRemoveEnabled) {
+                console.log(`[AutoRemove] ON (max_time=${autoRemoveMinutes} min)`);
+            }
+
+            disconnectAllBtn.addEventListener('click', disconnectAllControllers);
+        }
+
+        async function disconnectAllControllers() {
+            const disconnectAllBtn = document.getElementById('disconnectAllControllersBtn');
+            const controllerIds = Object.entries(clients)
+                .filter(([, client]) => client && client.type === 'Controller')
+                .map(([id]) => id);
+
+            if (controllerIds.length === 0) {
+                console.log('[Monitor] No controller clients to disconnect');
+                return;
+            }
+
+            disconnectAllBtn.disabled = true;
+            try {
+                const results = await Promise.allSettled(
+                    controllerIds.map((id) =>
+                        fetch(`/api/clients/${id}`, { method: 'DELETE' }),
+                    ),
+                );
+
+                const failed = results.filter(
+                    (result) => result.status === 'rejected',
+                ).length;
+                console.log(
+                    `[Monitor] Disconnect controllers: ${controllerIds.length - failed}/${controllerIds.length} removed`,
+                );
+                updateClients();
+            } finally {
+                disconnectAllBtn.disabled = false;
+            }
+        }
+
+        function syncClientFirstSeen() {
+            const currentIds = Object.keys(clients);
+            const currentIdSet = new Set(currentIds);
+
+            currentIds.forEach((id) => {
+                if (!clientFirstSeen[id]) {
+                    clientFirstSeen[id] = Date.now();
+                }
+            });
+
+            Object.keys(clientFirstSeen).forEach((id) => {
+                if (!currentIdSet.has(id)) {
+                    delete clientFirstSeen[id];
+                    delete pendingAutoDisconnect[id];
+                }
+            });
+        }
+
+        function processAutoRemove() {
+            if (!autoRemoveEnabled) return;
+            const maxTimeMs = autoRemoveMinutes * 60 * 1000;
+            const now = Date.now();
+
+            Object.entries(clients).forEach(([id, client]) => {
+                if (!client || client.type !== 'Controller') return;
+                if (pendingAutoDisconnect[id]) return;
+
+                const firstSeenAt = clientFirstSeen[id] || now;
+                if (now - firstSeenAt >= maxTimeMs) {
+                    console.log(
+                        `[AutoRemove] Kicking client ${id} after ${autoRemoveMinutes} min`,
+                    );
+                    pendingAutoDisconnect[id] = true;
+                    disconnectClient(id, { auto: true });
+                }
+            });
         }
 
         function connectWebSocket() {
@@ -573,6 +762,7 @@
         };
 
         function init() {
+            bindAutoRemoveControls();
             renderOscDocs();
             updateClients();
             setInterval(updateClients, 1000); // Less frequent polling now that we have WebSocket
@@ -631,7 +821,9 @@
                     
                     prevClients = JSON.parse(JSON.stringify(data.clients || {}));
                     clients = data.clients || {};
+                    syncClientFirstSeen();
                     renderClients(data);
+                    processAutoRemove();
                 })
                 .catch(err => {
                     console.error('Error fetching clients:', err);
@@ -664,8 +856,8 @@
                             <div class="client-info">
                                 <div class="led" id="led-${id}"></div>
                                 <div>
+                                    <div class="client-name">${type}${assignment}</div>
                                     <div class="client-id">${id}</div>
-                                    <div class="client-type">${type}${assignment}</div>
                                 </div>
                             </div>
                             <button class="disconnect-btn" onclick="disconnectClient('${id}')" title="Disconnect">x</button>
@@ -693,17 +885,25 @@
             }
         }
 
-        function disconnectClient(clientId) {
-            if (confirm(`Disconnect client ${clientId}?`)) {
-                fetch(`/api/clients/${clientId}`, { method: 'DELETE' })
-                    .then(() => {
+        function disconnectClient(clientId, opts = {}) {
+            fetch(`/api/clients/${clientId}`, { method: 'DELETE' })
+                .then(() => {
+                    if (opts.auto) {
+                        console.log(`[AutoRemove] Disconnected ${clientId}`);
+                    } else {
                         console.log(`Disconnected ${clientId}`);
-                        updateClients();
-                    })
-                    .catch(err => {
-                        console.error('Error disconnecting client:', err);
-                    });
-            }
+                    }
+                    updateClients();
+                })
+                .catch(err => {
+                    console.error('Error disconnecting client:', err);
+                })
+                .finally(() => {
+                    delete pendingAutoDisconnect[clientId];
+                    if (opts.auto) {
+                        delete clientFirstSeen[clientId];
+                    }
+                });
         }
 
         function renderOscDocs() {
